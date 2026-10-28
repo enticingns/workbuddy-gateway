@@ -1,0 +1,22 @@
+name: privacy-scan
+
+# 公开仓库的隐私/凭据闸门：任何 push / PR 都扫一遍已跟踪文件，
+# 命中邮箱、真实手机号、令牌、SSH 主机指纹或非保留网段 IP 直接失败。
+# 规则与本地脚本共用 scripts/privacy_scan.py（提交前先本地跑一次）。
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan tracked files for PII / credentials
+        run: python scripts/privacy_scan.py

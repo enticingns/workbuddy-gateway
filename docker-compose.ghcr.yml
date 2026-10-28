@@ -1,0 +1,36 @@
+# 从 GHCR 拉取预构建镜像（推荐）
+#
+# 好处：服务器上不编译，部署只有 pull + up 两步，不会再出现
+#       「构建时 SSH 掉线 / load 飙高」把服务拖死的情况。
+#
+# 用法：
+#   docker compose -f docker-compose.ghcr.yml pull
+#   docker compose -f docker-compose.ghcr.yml up -d --force-recreate
+#
+# 版本锁定：把 :latest 换成 :sha-<commit> 可钉住具体构建（tag 由 CI 产出）。
+# 回滚：pull 上一个 sha tag 再 up -d 即可，数据不受影响
+#       （auths / data / config.json 都是宿主机挂载）。
+#
+# 仍然想本地构建时，继续用 docker-compose.yml（build: .）。
+
+services:
+  wb2api:
+    image: ghcr.io/enticingns/workbuddy-gateway:latest
+    container_name: workbuddy2api
+    restart: unless-stopped
+    # 容器默认以 app 用户（uid 10001）运行。宿主机挂载目录属主不同会导致
+    # 「写入 auths/*.json.tmp 失败 permission denied」，三种解法任选：
+    #   1) 让容器以你自己的 uid 运行：PUID=$(id -u) PGID=$(id -g) docker compose up -d
+    #   2) sudo chown -R 10001:10001 ./auths ./data ./config.json
+    #   3) user: "0:0" 以 root 运行（省事但容器逃逸面更大，自担）
+    user: "${PUID:-10001}:${PGID:-10001}"
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "7863:7863"
+    volumes:
+      - ./auths:/app/auths
+      - ./data:/app/data
+      # 宿主机必须先有 config.json（cp config.example.json config.json）。
+      # 不挂 :ro：面板「配置」页需要写回此文件（保存后热生效）。
+      - ./config.json:/app/config.json
