@@ -751,10 +751,11 @@ type Client struct {
 	UserAgent string
 
 	// ClientVersion WorkBuddy 客户端版本段（出站 UA 的 `WorkBuddy/<ver>` + X-IDE-Version）。
-	// 空 = 内置默认（对齐官方 5.9.2 分发包）。
+	// 空 = 按账号 realm 取内置默认（CN 5.9.3 / global 5.9.4，见 headers.go）。
 	ClientVersion string
 
-	// CliVersion 出站 UA 中 `CLI/<ver>` 段版本。空 = 内置默认（官方内置 CLI 2.176.0）。
+	// CliVersion 出站 UA 中 `CLI/<ver>` 段版本。
+	// 空 = 按账号 realm 取内置默认（CN 与 global 均为 2.165.0，见 headers.go）。
 	CliVersion string
 
 	// ClientName 用量归属头取值（X-Product / X-IDE-Name / X-IDE-Type / X-IDE-Version）。
