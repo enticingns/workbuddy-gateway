@@ -1,6 +1,6 @@
 // Package headers 构造三类上游请求头（common / chat / billing / refresh）。
 // 规则来自 docs/api-reference.md §0/§4/§6，出站头族以真机抓包（2026-10-28，
-// CN 5.9.3 / intl 5.8.4 双域全量请求）为唯一基准。
+// CN 5.9.3 / intl 5.8.4 双域全量请求）为基准；2026-11-02 按客户端 5.9.4 跟进版本号。
 package upstream
 
 import (
@@ -13,14 +13,17 @@ import (
 )
 
 const (
-	// 官方分发包实测版本（2026-10-28：安装包解包 + 真机抓包）——两版**不同轨**：
+	// 官方分发包实测版本（2026-11-02：安装包解包 + 官方 /v2/update 核对）——两版**不同轨**：
 	//   CN     桌面 5.9.3（commit d469242）/ 内嵌 CLI 2.165.0
-	//   global 桌面 5.8.4（commit 73952edb）/ 内嵌 CLI 2.161.0
+	//   global 桌面 5.9.4（commit fa0a090）/ 内嵌 CLI 2.165.0
+	// 变更史：2026-10-28 时 global 为 5.8.4 / CLI 2.161.0；11-02 客户端已升 5.9.4 / 2.165.0
+	// （官方更新接口对 5.9.4 返回 204 = 已是最新）。product.json 的 applicationName 仍为
+	// workbuddy-ai，故 UA 第二段不变，只有版本数字跟进。
 	// config upstream.client_version / cli_version 非空时**同时覆盖两域**（兼容旧配置）。
 	defaultClientVersionCN     = "5.9.3"
 	defaultCliVersionCN        = "2.165.0"
-	defaultClientVersionGlobal = "5.8.4"
-	defaultCliVersionGlobal    = "2.161.0"
+	defaultClientVersionGlobal = "5.9.4"
+	defaultCliVersionGlobal    = "2.165.0"
 
 	// 旧名保留：默认账号形态即 CN，零回归兼容既有调用点/测试。
 	defaultClientVersion = defaultClientVersionCN
@@ -62,7 +65,7 @@ func (c *Client) clientVersion() string {
 }
 
 // clientVersionFor 按账号 realm 取桌面端版本：显式 ClientVersion 优先（同时作用于两域），
-// 否则 CN 5.9.3 / global 5.8.4（官方两个分发包不同轨，实测值）。
+// 否则 CN 5.9.3 / global 5.9.4（官方两个分发包不同轨，实测值）。
 func (c *Client) clientVersionFor(a *auth.Auth) string {
 	if c != nil && c.ClientVersion != "" {
 		return c.ClientVersion
@@ -79,7 +82,7 @@ func (c *Client) cliVersion() string {
 }
 
 // cliVersionFor 按账号 realm 取内嵌 CLI 版本：显式 CliVersion 优先，
-// 否则 CN 2.165.0 / global 2.161.0（取自各自安装包 package.json / customPackage）。
+// 否则 CN 2.165.0 / global 2.165.0（取自各自安装包 package.json / customPackage）。
 func (c *Client) cliVersionFor(a *auth.Auth) string {
 	if c != nil && c.CliVersion != "" {
 		return c.CliVersion
@@ -98,8 +101,8 @@ func (c *Client) cliVersionFor(a *auth.Auth) string {
 // global 账号送错平台段（`WorkBuddy` 非 `WorkBuddy AI`）可能触发上游 403 code 11140
 // "request illegal" 风控。官方无任何 UA 随机化，故默认确定性。
 func (c *Client) defaultWorkBuddyUAFor(a *auth.Auth) string {
-	// 真机抓包实测（2026-10-28，global 5.8.4）：
-	//   `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0`
+	// 真机抓包实测（2026-10-28 global 5.8.4；2026-11-02 客户端升至 5.9.4，UA 形状不变）：
+	//   `WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0`
 	// 第二段是 applicationName（global=`workbuddy-ai`、CN=`WorkBuddy`），**不是** productName
 	// （`WorkBuddy AI` 只是 productName，实测不出现在 UA 里）。两段版本号同源但按 realm 取值。
 	platform := "WorkBuddy"

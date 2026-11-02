@@ -5,6 +5,32 @@
 
 ---
 
+## 2026-11-02：跟进客户端 5.9.4（global 轨版本号）
+
+官方国际版桌面端已从 5.8.4 升到 **5.9.4**，内嵌 CLI 从 2.161.0 升到 **2.165.0**，网关默认出站身份同步跟进。
+
+| | CN | global |
+|---|---|---|
+| 桌面端 | 5.9.3（不变） | **5.8.4 → 5.9.4** |
+| 内嵌 CLI | 2.165.0（不变） | **2.161.0 → 2.165.0** |
+| UA 第二段 | `WorkBuddy` | `workbuddy-ai`（不变） |
+
+核对方式（不依赖抓包）：
+
+- 两个安装包的 `resources/app.asar.unpacked/cli/product.json`：CN `genieVersion=5.9.3`、intl `genieVersion=5.9.4`；
+  `applicationName` 分别是 `WorkBuddy` / `workbuddy-ai`（**未变**，所以 UA 第二段不动）；
+- 内嵌 CLI 的 `cli/package.json`：两边都是 `@genie/agent-cli 2.165.0`；
+- 官方更新接口 `GET /v2/update?platform=workbuddy-win32-x64-user&version=<当前版本>`：
+  对 CN 5.9.3 与 intl 5.9.4 **均返回 204**（已是最新，没有更高版本）。
+
+行为未变（静态核对 intl asar）：`X-Private-Data` 仍恒 `true`；`baggage` / `X-Agent-Runtime`
+仍只出现在 CN 档（intl asar 内搜不到该字符串）。
+
+**升级注意**：`config.json` 里若显式写过 `upstream.client_version` / `cli_version`，会覆盖新默认值，
+需要清空或改成 `5.9.4` / `2.165.0` 才生效。
+
+---
+
 ## 2026-10-28：出站身份对齐官方实测值（真机抓包驱动）
 
 ### 背景：之前的身份是**推断**出来的
