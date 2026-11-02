@@ -63,3 +63,14 @@ tools/wb-capture/product.orig.json
 tools/wb-capture/*.bak-orig
 tools/wb-capture/profile*.json
 tools/wb-capture/identity-verify-result.json
+
+# 会话/临时产物（历史转储、token）——绝不入库
+.tmp*
+**/.tmp*
+*.tmp_*
+**/*.tmp_*
+# SSH / 凭据
+id_rsa*
+id_ed25519*
+*.jwt
+*.jsonl
