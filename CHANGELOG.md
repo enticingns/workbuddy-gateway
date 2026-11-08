@@ -70,18 +70,10 @@ README 默认值改 `5.9.3 / 5.9.4` + `2.165.0 / 2.165.0`；`cmd/server/config.g
    另外 `<configDir>` 必须是 ASCII 路径（BoringSSL 窄字符 fopen），故 `D:\wbcfg` 之类的
    junction 仍是必需的（见 `docs/CN真机出站身份-20261028.md` §6.1）。
 
-### 修复：CN 域 `X-Domain` 与 `Host` 不一致 → 偶发 400 / 11-128
+### 修复：CN 域 `X-Domain` 未跟随 `Host`（一致性修正）
 
-上线 v1.14.0 后，国内机在一次重启后的首条请求上出现：
-
-```
-400 {"code":11-128,"msg":"Illegal API invocation from an unapproved channel"}
-```
-
-网关按既有策略判定为 `ErrContentBlocked`（不罚账号、无冷却/熔断）→ 降级 prompt 重试 →
-下一条起全部 `200`，客户端无感（仅该次多耗约 12 秒）。
-
-**定位**（对照官方真机抓包 + 两域账号落盘域）：
+线上出现偶发 `400 / code 11-128`「Illegal API invocation from an unapproved channel」，
+排查过程中先发现一处与官方形态不符的头部差异，已修（**但不是该错误的根因**，根因见下一节）。
 
 | | 官方真机 | 网关（修复前） |
 |---|---|---|
@@ -91,10 +83,8 @@ README 默认值改 `5.9.3 / 5.9.4` + `2.165.0 / 2.165.0`；`cmd/server/config.g
 
 - 官方不变式是 **`X-Domain == Host`**（本次两域 chat 抓包均如此）；
 - 旧实现 `realmDomain()` 优先取**登录时落盘的 domain**。国内账号落盘的是历史登录域
-  `www.codebuddy.cn`，而 `cn.chat_base` 指向 `www.workbuddy.cn` → 出站声明域与实际
-  目标域不符，属「通道一致性」可被抽样命中的一类指纹差异；
-- 对照组：国际机账号落盘域与 global chat base 同为 `www.workbuddy.ai`，`X-Domain == Host`，
-  同期 0 次命中。
+  `www.codebuddy.cn`，而 `cn.chat_base` 指向 `www.workbuddy.cn`；
+- 国际机账号落盘域与 global chat base 同为 `www.workbuddy.ai`，不存在该差异。
 
 **改动**：
 
@@ -102,11 +92,32 @@ README 默认值改 `5.9.3 / 5.9.4` + `2.165.0 / 2.165.0`；`cmd/server/config.g
   **本次 base 的 host** > 账号落盘 domain > realm 常量兜底（`base` 为空时与旧实现完全一致，
   单测零回归）；chat（`CommonHeaders`）用 `chatBase`、billing（`BillingHeaders`）用 `billingBase`。
 - `client.go`：`v3ConfigDomain` 同步改为 host 优先。
-- `headers_test.go`：新增 `TestXDomainFollowsHost`（CN 落盘 codebuddy.cn + base workbuddy.cn
-  → 跟随 Host；global；无 base 回落；无 domain 常量兜底）。
+- `headers_test.go`：新增 `TestXDomainFollowsHost`（4 个分档用例）。
 
-**验证计划**：国内机用同一批账号连打（含超长 prompt），确认日志 `11-128` 归零，且实际出站
-`X-Domain == Host`。
+### 待跟进：`11-128` 的真实根因在 **system prompt**，不在头部
+
+升级到含上述修复的版本后，同一条错误在**冷启动首条请求**上依然复现（同一账号、同一组头），
+因此可以确定与头部无关。关键证据：
+
+| 观测 | 结论 |
+|---|---|
+| 同账号、同头部，仅把 system prompt 换成网关的中性提示词重试 → `200` | 触发条件在**请求体（system prompt）**里 |
+| 每条错误都发生在容器重启后的**第一条** chat 请求 | 与「进程内状态」相关（见下） |
+| 触发后当日不再复现 | 网关已切到降级提示词 |
+
+机制：该部署 `prompt.mode = "passthrough"`，客户端自己的 system prompt 原样透传给上游；
+上游通道校验判定其为非官方通道 → `11-128`。网关既有兜底 `degradeGate` 会把 system prompt
+换成中性 `prompt.Degraded` 重试并成功，但**降级状态是进程级且持续到次日 00:00 CST**：
+
+- 好处：一天只撞一次；
+- 代价：**降级期内所有请求的 system prompt 都被替换成中性提示词**（客户端自定义指令当日起失效），
+  且状态不落盘，重启即清零 → 每次重启都会重新撞一次。
+
+可选方向（待定，未实施）：
+
+1. `prompt.mode` 改 `custom`（网关注入自己的 system prompt，不再透传客户端原文）；
+2. 缩小降级作用域：按账号/模型降级，而非全局到零点；
+3. 保留现状（一天一次 + 当日中性提示词）。
 
 ---
 
