@@ -156,3 +156,54 @@ func TestChatHeadersMatchCapturedBaseline(t *testing.T) {
 		t.Errorf("acp-connection-id 应进程级恒定，got %q vs %q", a, b)
 	}
 }
+
+// TestXDomainFollowsHost 断言 X-Domain 恒等于本次请求的 Host（官方真机不变式）。
+// 回归点：CN 账号登录时落盘 domain 是 www.codebuddy.cn，而 cn.chat_base 指向
+// www.workbuddy.cn，旧实现会让出站变成「Host=workbuddy.cn + X-Domain=codebuddy.cn」，
+// 与官方形态不符，会被上游通道校验抽样命中 400 / code 11-128
+// 「Illegal API invocation from an unapproved channel」（2026-11-08 国内机实测）。
+func TestXDomainFollowsHost(t *testing.T) {
+	cases := []struct {
+		name    string
+		client  *Client
+		auth    *auth.Auth
+		wantDom string
+	}{
+		{
+			name:    "CN 落盘 codebuddy.cn + chat_base workbuddy.cn → 跟随 Host",
+			client:  &Client{ChatBaseCN: "https://www.workbuddy.cn"},
+			auth:    &auth.Auth{UID: "u1", AccessToken: "at", Domain: "www.codebuddy.cn"},
+			wantDom: "www.workbuddy.cn",
+		},
+		{
+			name:    "global 落盘 workbuddy.ai → 跟随 Host",
+			client:  &Client{ChatBaseGlobal: "https://www.workbuddy.ai"},
+			auth:    &auth.Auth{UID: "u2", AccessToken: "at", Domain: "www.workbuddy.ai"},
+			wantDom: "www.workbuddy.ai",
+		},
+		{
+			name:    "CN 未配 base → 回落落盘 domain（零回归）",
+			client:  &Client{},
+			auth:    &auth.Auth{UID: "u3", AccessToken: "at", Domain: "www.codebuddy.cn"},
+			wantDom: "www.codebuddy.cn",
+		},
+		{
+			name:    "无 domain 无 base → 常量兜底",
+			client:  &Client{},
+			auth:    &auth.Auth{UID: "u4", AccessToken: "at"},
+			wantDom: domainCN,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, "https://example.com/v2/chat/completions", nil)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			tc.client.CommonHeaders(req, tc.auth)
+			if got := req.Header.Get("X-Domain"); got != tc.wantDom {
+				t.Errorf("X-Domain = %q, want %q", got, tc.wantDom)
+			}
+		})
+	}
+}

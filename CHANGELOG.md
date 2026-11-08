@@ -5,7 +5,7 @@
 
 ---
 
-## 2026-11-08：v1.14.0-panel · 真机抓包复核（两域 chat 头族 + SSE 帧）
+## 2026-11-08：v1.14.1-panel · 真机抓包复核（两域 chat 头族 + SSE 帧）+ `X-Domain` 对齐 Host
 
 两端客户端升级后重抓一轮（intl 5.9.4 / CN 5.9.3，`captures_mitm/20261108-103322`，
 两域各 1 条 `POST /v2/chat/completions`，286 / 257 帧）。装机构建与 11-02 基线同 commit
@@ -69,6 +69,44 @@ README 默认值改 `5.9.3 / 5.9.4` + `2.165.0 / 2.165.0`；`cmd/server/config.g
    （`system_ca_bundle.n(configDir)` 为真才注入），缺失时只是异步补生成，赶不上本次 spawn。
    另外 `<configDir>` 必须是 ASCII 路径（BoringSSL 窄字符 fopen），故 `D:\wbcfg` 之类的
    junction 仍是必需的（见 `docs/CN真机出站身份-20261028.md` §6.1）。
+
+### 修复：CN 域 `X-Domain` 与 `Host` 不一致 → 偶发 400 / 11-128
+
+上线 v1.14.0 后，国内机在一次重启后的首条请求上出现：
+
+```
+400 {"code":11-128,"msg":"Illegal API invocation from an unapproved channel"}
+```
+
+网关按既有策略判定为 `ErrContentBlocked`（不罚账号、无冷却/熔断）→ 降级 prompt 重试 →
+下一条起全部 `200`，客户端无感（仅该次多耗约 12 秒）。
+
+**定位**（对照官方真机抓包 + 两域账号落盘域）：
+
+| | 官方真机 | 网关（修复前） |
+|---|---|---|
+| 请求目标 | `Host: www.workbuddy.cn` | `Host: www.workbuddy.cn`（`cn.chat_base`） |
+| 身份头 | `X-Domain: www.workbuddy.cn` | **`X-Domain: www.codebuddy.cn`** |
+| 一致性 | ✅ `X-Domain == Host` | ❌ 两者不同域 |
+
+- 官方不变式是 **`X-Domain == Host`**（本次两域 chat 抓包均如此）；
+- 旧实现 `realmDomain()` 优先取**登录时落盘的 domain**。国内账号落盘的是历史登录域
+  `www.codebuddy.cn`，而 `cn.chat_base` 指向 `www.workbuddy.cn` → 出站声明域与实际
+  目标域不符，属「通道一致性」可被抽样命中的一类指纹差异；
+- 对照组：国际机账号落盘域与 global chat base 同为 `www.workbuddy.ai`，`X-Domain == Host`，
+  同期 0 次命中。
+
+**改动**：
+
+- `headers.go`：`realmDomain()` → `realmDomainFor(a, base)`，优先级改为
+  **本次 base 的 host** > 账号落盘 domain > realm 常量兜底（`base` 为空时与旧实现完全一致，
+  单测零回归）；chat（`CommonHeaders`）用 `chatBase`、billing（`BillingHeaders`）用 `billingBase`。
+- `client.go`：`v3ConfigDomain` 同步改为 host 优先。
+- `headers_test.go`：新增 `TestXDomainFollowsHost`（CN 落盘 codebuddy.cn + base workbuddy.cn
+  → 跟随 Host；global；无 base 回落；无 domain 常量兜底）。
+
+**验证计划**：国内机用同一批账号连打（含超长 prompt），确认日志 `11-128` 归零，且实际出站
+`X-Domain == Host`。
 
 ---
 

@@ -12,7 +12,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -1883,8 +1882,13 @@ func (c *Client) GlobalEffortSnapshot() (efforts map[string][]string, defaults m
 	return c.effortsSnapshot("global"), c.defaultEffortsSnapshot("global")
 }
 
-// v3ConfigDomain /v3/config 的 X-Domain：优先账号落盘 domain，否则 chatBase host。
+// v3ConfigDomain /v3/config 的 X-Domain：与其它出站一致，恒等于本次请求的 Host
+// （chatBase host 优先，其次账号落盘 domain，最后 copilot.tencent.com 兜底）。
+// 2026-11-08 起统一按「X-Domain == Host」对齐官方真机形态，见 realmDomainFor。
 func v3ConfigDomain(a *auth.Auth, chatBase string) string {
+	if h := hostOfBase(chatBase); h != "" {
+		return h
+	}
 	if a != nil {
 		// Domain 加锁快照（见 auth.DomainValue：keepalive 刷新在 a.mu 内改写）。
 		if d := strings.TrimSpace(a.DomainValue()); d != "" {
@@ -1892,9 +1896,6 @@ func v3ConfigDomain(a *auth.Auth, chatBase string) string {
 			d = strings.TrimPrefix(d, "http://")
 			return strings.TrimSuffix(d, "/")
 		}
-	}
-	if u, err := url.Parse(chatBase); err == nil && u.Host != "" {
-		return u.Host
 	}
 	return "copilot.tencent.com"
 }

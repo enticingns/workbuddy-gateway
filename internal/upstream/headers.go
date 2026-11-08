@@ -5,6 +5,7 @@ package upstream
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -44,12 +45,36 @@ const (
 	stainlessRuntimeVersion = "v22.21.1"
 )
 
-// realmDomain 返回账号 realm 对应的 X-Domain 声明值：global → www.workbuddy.ai，
-// cn → www.workbuddy.cn。登录会话带自定义 Domain 时以会话值为准（DomainValue）。
-func realmDomain(a *auth.Auth) string {
+// hostOfBase 从 base URL 取 Host（保留端口）；不可解析时返回空串。
+func hostOfBase(base string) string {
+	if u, err := url.Parse(strings.TrimSpace(base)); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return ""
+}
+
+// realmDomainFor 返回本次请求的 X-Domain 声明值。
+//
+// 官方真机的不变式是 **X-Domain == Host**（2026-11-08 两域 chat 抓包：Host 与
+// X-Domain 同为 www.workbuddy.cn / www.workbuddy.ai）。历史实现优先取登录时落盘的
+// domain，而 CN 账号落盘的是 `www.codebuddy.cn`、`cn.chat_base` 却指向
+// `www.workbuddy.cn` → 出站变成「Host=workbuddy.cn + X-Domain=codebuddy.cn」，
+// 与官方形态不符，会被上游通道校验抽样命中 400 / code 11-128
+// 「Illegal API invocation from an unapproved channel」（2026-11-08 国内机实测命中 1 次，
+// 经降级 prompt 重试后成功）。
+//
+// 故优先级改为：**本次 base 的 host** > 账号落盘 domain > 按 realm 常量兜底。
+// 这样 X-Domain 恒等于实际 Host，与官方客户端一致；base 未配置（如单测里的空 Client）
+// 时行为与旧实现完全一致（零回归）。
+func (c *Client) realmDomainFor(a *auth.Auth, base string) string {
+	if h := hostOfBase(base); h != "" {
+		return h
+	}
 	if a != nil {
 		if d := strings.TrimSpace(a.DomainValue()); d != "" {
-			return d
+			d = strings.TrimPrefix(d, "https://")
+			d = strings.TrimPrefix(d, "http://")
+			return strings.TrimSuffix(d, "/")
 		}
 		if a.IsGlobal() {
 			return domainGlobal
@@ -233,8 +258,9 @@ func (c *Client) CommonHeaders(req *http.Request, a *auth.Auth) {
 	req.Header.Set("X-CodeBuddy-Request", "1")
 	// X-Product: SaaS（= deploymentType，官方全量请求 111/134 命中，恒 SaaS）。
 	req.Header.Set("X-Product", "SaaS")
-	// X-Domain 声明域（官方全量请求 166/166 命中）。
-	req.Header.Set("X-Domain", realmDomain(a))
+	// X-Domain 声明域（官方全量请求 166/166 命中），取值恒等于本次请求的 Host
+	// （见 realmDomainFor：base host 优先，落盘 domain 次之）。
+	req.Header.Set("X-Domain", c.realmDomainFor(a, c.chatBase(a)))
 }
 
 // acceptLanguageFor 按账号 realm 返回 Accept-Language：global → en-US，cn → zh-CN。
@@ -505,8 +531,9 @@ func (c *Client) BillingHeaders(req *http.Request, a *auth.Auth) {
 		req.Header.Set("User-Agent", ua)
 	}
 	// X-Product / X-Domain：官方全量请求恒带（见 CommonHeaders），billing 域单独注入。
+	// X-Domain 同样跟随本次 base 的 Host（billing 走 billingBase）。
 	req.Header.Set("X-Product", "SaaS")
-	req.Header.Set("X-Domain", realmDomain(a))
+	req.Header.Set("X-Domain", c.realmDomainFor(a, c.billingBase(a)))
 	if a.UID != "" {
 		req.Header.Set("X-User-Id", a.UID)
 	}
