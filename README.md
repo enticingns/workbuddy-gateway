@@ -92,11 +92,17 @@ exe 为单文件自包含（面板前端已 embed），拷到任意 Windows 机�
 | `upstream.idle_timeout_seconds` | `300` | 聊天流中空闲上限（活跃吐数据不掐） |
 | `pool.max_in_flight` / `max_in_flight_global` | `3` / `2` | 单账号在途上限（国际版风控更紧，压低） |
 | `pool.credit_floor` | `100` | 余额保底：低于此值的账号不接实测收费模型 |
-| `prompt.mode` | `custom` | `custom` 替换客户端 system / `append` 追加 / `passthrough` 透传 |
+| `prompt.mode` | `passthrough` | `custom` 替换客户端 system / `append` 追加 / `passthrough` 透传（账号安全考虑见下方注） |
 | `logging.request_archive_enabled` | `true` | 请求元数据 JSONL 归档（不含提示词与正文） |
 
 完整字段表见 `config.example.json` 内注释。环境变量 `WB2A_*`（非空才生效）可覆盖文件配置：
 `WB2A_LISTEN` / `WB2A_API_KEY` / `WB2A_AUTH_DIR` / `WB2A_STATE_FILE` / `WB2A_TIMEOUT_SECONDS` 等。
+
+> **`prompt.mode` 怎么选（账号安全）**：`passthrough` 会把客户端自己的 system prompt 原样
+> 发给上游。上游的通道校验会抽样拒绝「非官方通道」的 system prompt（`400 / code 11-128`
+> `Illegal API invocation from an unapproved channel`），网关虽有降级重试兜底，但**每撞一次
+> 都是上游记在该账号头上的一条非法调用记录**。若在意账号安全，建议 `custom`（网关注入
+> 自己的 system prompt，客户端原文不上传），实测可将该错误降到 0。
 
 > **出站身份**：默认值即「官方桌面端逐头对齐」（UA / `X-IDE-*` / `X-Product` / 会话头族 /
 > `x-stainless-*` / `traceparent`+`b3` / `acp-connection-id` / gzip body），且**不再发送**
@@ -246,7 +252,7 @@ curl -s http://127.0.0.1:7863/v1/chat/completions \
 | 行为 | 旧版 | 本分支 |
 |---|---|---|
 | `stream` | 原样透传 | 上游要求 `stream:true`，网关按需补齐，`stream:false` 本地聚合 |
-| 系统提示词 | 透传 | 默认 `custom` 替换为网关提示词（`prompt.mode` 可切回 `passthrough`） |
+| 系统提示词 | 透传 | 默认 `passthrough`（透传客户端 system）；对账号安全敏感时建议改 `custom` |
 | 归属头 | 固定 `WorkBuddy` | 按账号 realm 注入（global → `WorkBuddy AI`） |
 | 请求体大小 | 有上限 | 无预拦截，交给上游自然报错 |
 | 日志 | 无请求级日志 | 每请求一行表格日志 + JSONL 归档（`data/request-logs/`） |
