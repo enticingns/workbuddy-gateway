@@ -78,6 +78,13 @@ type Event struct {
 	TotalTokens      int64     `json:"total_tokens,omitempty"`
 	Credit           float64   `json:"credit,omitempty"`
 	HasCredit        bool      `json:"credit_known"`
+	// OriginalCredit / QuotaResetAt 上游末帧 usage 里 2026-11-08 起新增的两个字段：
+	//   original_credit：原价成本（免费模型下 credit=0 而它仍 >0，如 0.31）
+	//   quota.reset_at ：该模型的额度重置时间（Unix 秒，上游以字符串下发）
+	// 按「只加观测」处理：仅落归档供成本分析，不参与积分统计口径（仍以 credit 为准）。
+	OriginalCredit    float64 `json:"original_credit,omitempty"`
+	HasOriginalCredit bool    `json:"original_credit_known,omitempty"`
+	QuotaResetAt      int64   `json:"quota_reset_at,omitempty"`
 	// CacheHitTokens / CacheMissTokens 上游前缀缓存命中/未命中 token（issue #92）。
 	// 上游未回该维度时两者皆零值省略；hit=0 + miss>0 即整段未命中。
 	CacheHitTokens  int64 `json:"cache_hit_tokens,omitempty"`

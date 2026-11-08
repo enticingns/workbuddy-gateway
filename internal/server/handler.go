@@ -1136,6 +1136,11 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			credit, hasCredit := stats.Credit()
+			// original_credit / quota.reset_at 只做观测（不改积分口径）。
+			if oc, ok := stats.OriginalCredit(); ok {
+				st.originalCredit, st.hasOriginalCredit = oc, true
+			}
+			st.quotaResetAt = stats.QuotaResetAt()
 			if hit, miss, ok := stats.CacheTokens(); ok {
 				st.cacheHit, st.cacheMiss, st.hasCache = hit, miss, true
 			}
@@ -1200,6 +1205,11 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			if hit, miss, okC := cacheTokensFromUsage(usage); okC {
 				st.cacheHit, st.cacheMiss, st.hasCache = hit, miss, true
 			}
+			// original_credit / quota.reset_at 只做观测（同流式路径）。
+			if oc, okO := usage["original_credit"].(float64); okO {
+				st.originalCredit, st.hasOriginalCredit = oc, true
+			}
+			st.quotaResetAt = quotaResetAtFromUsage(usage)
 		}
 		recordAttempt(acct.UID, usageDeltaFromResponse(resp), credit, hasCredit, attemptStarted, 0)
 		if st.hasCache {

@@ -343,7 +343,7 @@ func (c *Client) injectGlobalChatHeaders(req *http.Request, a *auth.Auth) {
 //     TraceId 与 16 hex SpanId；入站 conversationRequestID 非法时 TraceId 回落
 //     messageID（恒 32 hex），SpanId 取 messageID[:16]（每消息新）。
 //   - traceparent / b3（单头）/ baggage：同一 TraceId/SpanId 的 W3C + Zipkin 双格式
-//     与上游 baggage 语义（baggage、X-Agent-Runtime 仅 CN 携带，见函数尾）。
+//     与上游 baggage 语义（baggage、X-Agent-Runtime 两域都携带，见函数尾）。
 func (c *Client) injectConversationHeaders(req *http.Request, a *auth.Auth, meta ChatMeta) {
 	convReqID := meta.ConversationRequestID
 	if convReqID == "" {
@@ -383,13 +383,12 @@ func (c *Client) injectConversationHeaders(req *http.Request, a *auth.Auth, meta
 	// 只发其中一套本身就是「非官方链路」的指纹。
 	req.Header.Set("traceparent", "00-"+b3Trace+"-"+span+"-01")
 	req.Header.Set("b3", b3Trace+"-"+span+"-1")
-	// baggage / X-Agent-Runtime 仅 CN 分档：官方 5.9.3（CN）带、5.8.4（intl）不带。
+	// baggage / X-Agent-Runtime 两域都发（真机抓包：intl 5.8.4 **不带**，5.9.4 起
+	// 与 CN 5.9.3 一致地带上；升级后 intl chat 头族只多这两个，无减少）。
 	// baggage 的 buddyId/buddyName 官方置空串，两个 id 取自会话头族。
-	if a == nil || !a.IsGlobal() {
-		req.Header.Set("baggage", "buddyId=,buddyName=,codebuddy.session_id="+conversationID+
-			",codebuddy.conversation_request_id="+convReqID)
-		req.Header.Set("X-Agent-Runtime", "local-agent")
-	}
+	req.Header.Set("baggage", "buddyId=,buddyName=,codebuddy.session_id="+conversationID+
+		",codebuddy.conversation_request_id="+convReqID)
+	req.Header.Set("X-Agent-Runtime", "local-agent")
 }
 
 // validTraceID 判断 B3 TraceId 是否合法：16 或 32 位 hex（大小写均可）。

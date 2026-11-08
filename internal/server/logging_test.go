@@ -62,6 +62,41 @@ func TestChatStatsReaderTokensFromUsage(t *testing.T) {
 	}
 }
 
+// TestChatStatsReaderOriginalCreditAndQuota 断言 2026-11-08 起上游 usage 新增的
+// original_credit 与 quota.reset_at 被采信（只做观测，不改 credit 口径）。
+func TestChatStatsReaderOriginalCreditAndQuota(t *testing.T) {
+	sse := "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2," +
+		"\"total_tokens\":12,\"credit\":0,\"original_credit\":0.31," +
+		"\"quota\":{\"model\":\"hy3\",\"percent\":0,\"reset_at\":\"1794108064\",\"shared_models\":[]}}}\n\n" +
+		"data: [DONE]\n\n"
+	r := newChatStatsReaderSince(strings.NewReader(sse), time.Now())
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	if credit, ok := r.Credit(); !ok || credit != 0 {
+		t.Errorf("credit=%v ok=%v, want 0/true（免费模型 credit 恒 0）", credit, ok)
+	}
+	if oc, ok := r.OriginalCredit(); !ok || oc != 0.31 {
+		t.Errorf("original_credit=%v ok=%v, want 0.31/true", oc, ok)
+	}
+	if got := r.QuotaResetAt(); got != 1794108064 {
+		t.Errorf("quota.reset_at=%d, want 1794108064（字符串下发需解析成 Unix 秒）", got)
+	}
+}
+
+// TestChatStatsReaderOriginalCreditAbsent 断言旧上游（无新字段）时不产生假值。
+func TestChatStatsReaderOriginalCreditAbsent(t *testing.T) {
+	sse := "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"credit\":0.5}}\n\ndata: [DONE]\n\n"
+	r := newChatStatsReaderSince(strings.NewReader(sse), time.Now())
+	_, _ = io.Copy(io.Discard, r)
+	if oc, ok := r.OriginalCredit(); ok || oc != 0 {
+		t.Errorf("original_credit=%v ok=%v, want 0/false", oc, ok)
+	}
+	if got := r.QuotaResetAt(); got != 0 {
+		t.Errorf("quota.reset_at=%d, want 0", got)
+	}
+}
+
 func TestChatStatsReaderNoUsage(t *testing.T) {
 	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"
 	r := newChatStatsReaderSince(strings.NewReader(sse), time.Now())

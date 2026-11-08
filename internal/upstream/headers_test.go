@@ -84,7 +84,8 @@ func chatHeaderNames(t *testing.T, a *auth.Auth) http.Header {
 //     traceparent / b3 / X-B3-*（三套链路格式）、X-Domain。
 //   - 绝不带：Origin、Referer、Accept-Language、X-Machine-ID、X-Session-ID、
 //     X-Forwarded-For、X-Real-IP、X-Client-IP（官方 Electron/Node 层一个都不发）。
-//   - 分档：baggage / X-Agent-Runtime 仅 CN；X-Private-Data 值 intl=true / CN=false。
+//   - 分档：X-Private-Data 值 intl=true / CN=false；baggage / X-Agent-Runtime
+//     两域都带（intl 5.8.4 起先是例外，5.9.4 起已与 CN 一致）。
 func TestChatHeadersMatchCapturedBaseline(t *testing.T) {
 	mustHave := []string{
 		"Accept", "Content-Type", "X-Requested-With", "User-Agent",
@@ -136,10 +137,12 @@ func TestChatHeadersMatchCapturedBaseline(t *testing.T) {
 
 	gl := chatHeaderNames(t, &auth.Auth{UID: "u2", AccessToken: "at", Domain: "www.workbuddy.ai"})
 	if got := gl.Get("X-Private-Data"); got != "true" {
-		t.Errorf("intl X-Private-Data = %q, want true（5.8.4 实测）", got)
+		t.Errorf("intl X-Private-Data = %q, want true（5.9.4 实测）", got)
 	}
-	if gl.Get("baggage") != "" || gl.Get("X-Agent-Runtime") != "" {
-		t.Errorf("intl 不应带 baggage/X-Agent-Runtime（5.8.4 实测），got %q/%q",
+	// intl 5.8.4 不带 baggage/X-Agent-Runtime，5.9.4 起与 CN 一致地带上
+	// （2026-11-02 真机抓包：intl chat 头族相对 5.8.4 只多这两个）。
+	if gl.Get("baggage") == "" || gl.Get("X-Agent-Runtime") != "local-agent" {
+		t.Errorf("intl 应带 baggage + X-Agent-Runtime: local-agent（5.9.4 实测），got baggage=%q runtime=%q",
 			gl.Get("baggage"), gl.Get("X-Agent-Runtime"))
 	}
 	if got := gl.Get("X-Domain"); got != domainGlobal {

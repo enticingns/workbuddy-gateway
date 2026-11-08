@@ -1,11 +1,12 @@
-// desktop.go 桌面客户端（WorkBuddy Desktop 5.9.2）行为指纹上报。
+// desktop.go 桌面客户端行为指纹上报（版本按 realm 分档：CN 5.9.3 / global 5.9.4）。
 //
 // 来源：2026-09-12 Sunny 抓包实测（data/desktop-task-protocol.md）。桌面端点亮
 // 「需电脑端」类任务的关键不是独立端点，而是同一 POST /v2/report 通道上
 // **不同的客户端指纹**：
 //
 //	POST https://copilot.tencent.com/v2/report        ← chatBase（CLI 上报走 billingBase）
-//	User-Agent: WorkBuddy/5.9.2 WorkBuddy/5.9.2 CLI/2.176.0
+//	User-Agent: WorkBuddy/5.9.3 WorkBuddy/5.9.3 CLI/2.165.0            （CN 真机）
+//	            WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0        （global 真机）
 //	X-Domain: copilot.tencent.com, X-Product: SaaS, X-User-Id: <uid>
 //	Body: [ {...event...} ]                           ← 数组
 //
@@ -39,9 +40,34 @@ import (
 const (
 	desktopReportPath    = "/v2/report"
 	desktopAppearanceSet = "/v2/user-asset/appearance/set"
-	// desktopUA 实测桌面客户端 UA（5.9.2 内嵌 CLI 2.176.0）。
-	desktopUA = "WorkBuddy/5.9.2 WorkBuddy/5.9.2 CLI/2.176.0"
+
+	// 桌面端指纹按 realm 分档（真机抓包基线 2026-11-02）：
+	//   CN     5.9.3 / commit d4692421… / releaseDate 1793093050922
+	//   global 5.9.4 / commit fa0a0901… / releaseDate 1793288804029
+	// 版本号与 UA 由 headers.go 的 clientVersionFor/cliVersionFor/userAgent 统一提供，
+	// 这里只补 report 事件体里那两个 headers.go 不覆盖的字段。
+	desktopCommitCN          = "d46924219e79332f49c37ccebf27292f87001b19"
+	desktopCommitGlobal      = "fa0a0901906addaa1a4259f6df347388a5563ded"
+	desktopReleaseDateCN     = int64(1793093050922)
+	desktopReleaseDateGlobal = int64(1793288804029)
 )
+
+// desktopCommitFor 按账号 realm 取桌面指纹的 commit（各自安装包 product.json 的 commit）。
+func desktopCommitFor(a *auth.Auth) string {
+	if a != nil && a.IsGlobal() {
+		return desktopCommitGlobal
+	}
+	return desktopCommitCN
+}
+
+// desktopReleaseDateFor 按账号 realm 取桌面指纹的 releaseDate：product.json 的 date
+// 按本地时区解析成毫秒时间戳（与真机上报值逐位一致：CN 1793093050922 / global 1793288804029）。
+func desktopReleaseDateFor(a *auth.Auth) int64 {
+	if a != nil && a.IsGlobal() {
+		return desktopReleaseDateGlobal
+	}
+	return desktopReleaseDateCN
+}
 
 // desktopBase 桌面端 /v2/report 与 user-asset 走 chatBase（copilot.tencent.com）。
 func (c *Client) desktopBase(a *auth.Auth) string { return c.chatBase(a) }
@@ -57,8 +83,11 @@ func deriveID(a *auth.Auth, salt string) string {
 type DesktopEvent map[string]any
 
 // desktopFingerprint 公共桌面指纹字段（注入每个事件，覆盖同名业务键）。
-func desktopFingerprint(a *auth.Auth) map[string]any {
+// 版本/commit/releaseDate 按 realm 取值，与 headers.go 的出站 UA 同源，
+// 避免出现「UA 说 5.9.4、上报体说 5.9.2」这种自相矛盾的身份。
+func (c *Client) desktopFingerprint(a *auth.Auth) map[string]any {
 	now := time.Now().UnixMilli()
+	ver := c.clientVersionFor(a)
 	return map[string]any{
 		"timezone":     "Asia/Shanghai",
 		"reportDelay":  2000,
@@ -66,15 +95,15 @@ func desktopFingerprint(a *auth.Auth) map[string]any {
 		"username":     a.Nickname,
 		"userNickname": a.Nickname,
 		"product":      "SaaS",
-		"releaseDate":  int64(1789036585355),
-		"commit":       "5f9692923c93033111c51ad7b003eb80204a9b75",
+		"releaseDate":  desktopReleaseDateFor(a),
+		"commit":       desktopCommitFor(a),
 		"ideName":      "WorkBuddy",
 		"ideType":      "WorkBuddy",
-		"ideVersion":   "5.9.2",
+		"ideVersion":   ver,
 		"machineId":    deriveID(a, "machine"),
 		"sessionId":    deriveID(a, "session"),
 		"extName":      "workbuddy-desktop",
-		"extVersion":   "5.9.2",
+		"extVersion":   ver,
 		"os":           "win32",
 		"arch":         "x64",
 		"osVersion":    "10.0.26220",
@@ -92,7 +121,7 @@ func (c *Client) ReportDesktopEvent(a *auth.Auth, events ...DesktopEvent) error 
 	if len(events) == 0 {
 		return fmt.Errorf("desktop report: no events")
 	}
-	fp := desktopFingerprint(a)
+	fp := c.desktopFingerprint(a)
 	arr := make([]map[string]any, 0, len(events))
 	for _, ev := range events {
 		m := map[string]any{}
@@ -115,7 +144,7 @@ func (c *Client) ReportDesktopEvent(a *auth.Auth, events ...DesktopEvent) error 
 	req.Header.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
-	req.Header.Set("User-Agent", desktopUA)
+	req.Header.Set("User-Agent", c.userAgent(a))
 	req.Header.Set("X-Domain", c.desktopBase(a))
 	req.Header.Set("X-Product", "SaaS")
 	req.Header.Set("X-Request-ID", deriveID(a, "req")+fmt.Sprintf("%d", time.Now().UnixNano()%1e6))
@@ -216,7 +245,7 @@ func (c *Client) SetAppearanceTheme(a *auth.Auth, resourceKey string) error {
 	req.Header.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
-	req.Header.Set("User-Agent", desktopUA)
+	req.Header.Set("User-Agent", c.userAgent(a))
 	req.Header.Set("X-Product", "SaaS")
 	if a.UID != "" {
 		req.Header.Set("X-User-Id", a.UID)
@@ -393,7 +422,7 @@ func (c *Client) MarketExpertList(a *auth.Auth, expertType string) ([]MarketExpe
 	}
 	req.Header.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", desktopUA)
+	req.Header.Set("User-Agent", c.userAgent(a))
 	req.Header.Set("X-Domain", c.chatBase(a))
 	req.Header.Set("X-Product", "SaaS")
 	if a.UID != "" {
@@ -441,7 +470,7 @@ func (c *Client) DesktopChatWithExpert(a *auth.Auth, expertID string) (conversat
 	h.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	h.Set("Content-Type", "application/json")
 	h.Set("Accept", "text/event-stream")
-	h.Set("User-Agent", desktopUA)
+	h.Set("User-Agent", c.userAgent(a))
 	h.Set("X-Domain", c.chatBase(a))
 	h.Set("X-Product", "SaaS")
 	h.Set("X-User-Id", a.UID)
@@ -451,7 +480,7 @@ func (c *Client) DesktopChatWithExpert(a *auth.Auth, expertID string) (conversat
 	h.Set("X-Agent-Type", "main")
 	h.Set("X-IDE-Name", "WorkBuddy")
 	h.Set("X-IDE-Type", "WorkBuddy")
-	h.Set("X-IDE-Version", "5.9.2")
+	h.Set("X-IDE-Version", c.clientVersionFor(a))
 	h.Set("x-codebuddy-request", "1")
 	if expertID != "" {
 		h.Set("X-Expert-Id", expertID)

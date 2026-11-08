@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,6 +58,11 @@ type chatStat struct {
 	attempts         int
 	credit           float64
 	hasCredit        bool
+	// original_credit / quota.reset_at 观测（2026-11-08 起上游下发）：
+	// 只进归档与成本分析，不改 credit 口径。
+	originalCredit    float64
+	hasOriginalCredit bool
+	quotaResetAt      int64
 	promptTokens     int64
 	completionTokens int64
 	totalTokens      int64
@@ -110,6 +116,11 @@ type chatStatsReader struct {
 	// credit 上游末帧 usage.credit（本次真实扣费积分），供成本台账（NoteModelCost）。
 	hasCredit  bool
 	credit     float64
+	// originalCredit / quotaResetAt 上游末帧 usage 的 original_credit 与
+	// quota.reset_at（2026-11-08 起下发）。只落归档观测，不改积分口径。
+	hasOriginalCredit bool
+	originalCredit    float64
+	quotaResetAt      int64
 	errorFrame bool
 	// cacheHit/cacheMiss 上游末帧 usage.prompt_cache_hit_tokens / miss_tokens，
 	// 供用量桶的命中率维度与 reqlog 逐次记录（issue #92）。
@@ -133,6 +144,35 @@ func (s *chatStatsReader) Tokens() (int, bool) { return s.completionTokens, s.ha
 
 // Credit 返回末帧 usage.credit（本次真实扣费积分）与是否缺失。
 func (s *chatStatsReader) Credit() (float64, bool) { return s.credit, s.hasCredit }
+
+// OriginalCredit 返回末帧 usage.original_credit（原价成本）与是否缺失。
+// 仅作观测：免费模型下 credit 恒 0，而 original_credit 仍反映真实成本。
+func (s *chatStatsReader) OriginalCredit() (float64, bool) {
+	return s.originalCredit, s.hasOriginalCredit
+}
+
+// QuotaResetAt 返回末帧 usage.quota.reset_at（额度重置时间，Unix 秒）；缺失为 0。
+func (s *chatStatsReader) QuotaResetAt() int64 { return s.quotaResetAt }
+
+// quotaResetAtFromUsage 从 usage.quota.reset_at 取额度重置时间（Unix 秒）。
+// 上游以**字符串**下发（如 "1794108064"），这里同时兼容数字形态；缺失/不可解析返回 0。
+func quotaResetAtFromUsage(usage map[string]any) int64 {
+	q, ok := usage["quota"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	switch v := q["reset_at"].(type) {
+	case string:
+		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			return n
+		}
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	}
+	return 0
+}
 
 // TotalTokens 返回末帧 usage.total_tokens 与是否缺失。
 func (s *chatStatsReader) TotalTokens() (int, bool) { return s.totalTokens, s.hasTotalTokens }
@@ -172,6 +212,12 @@ func (s *chatStatsReader) parseSSELine(line string) {
 			Credit               *float64 `json:"credit"`
 			PromptCacheHitTokens *int     `json:"prompt_cache_hit_tokens"`
 			PromptCacheMissTok   *int     `json:"prompt_cache_miss_tokens"`
+			// 2026-11-08 真机抓包新增：original_credit（原价成本）与
+			// quota.reset_at（额度重置时间，上游以字符串下发 Unix 秒）。
+			OriginalCredit *float64 `json:"original_credit"`
+			Quota          *struct {
+				ResetAt *string `json:"reset_at"`
+			} `json:"quota"`
 		} `json:"usage"`
 	}
 	if json.Unmarshal([]byte(payload), &chunk) != nil || chunk.Usage == nil {
@@ -206,6 +252,15 @@ func (s *chatStatsReader) parseSSELine(line string) {
 	if chunk.Usage.PromptCacheMissTok != nil {
 		s.hasCacheMiss = true
 		s.cacheMiss = *chunk.Usage.PromptCacheMissTok
+	}
+	if chunk.Usage.OriginalCredit != nil {
+		s.hasOriginalCredit = true
+		s.originalCredit = *chunk.Usage.OriginalCredit
+	}
+	if chunk.Usage.Quota != nil && chunk.Usage.Quota.ResetAt != nil {
+		if v, err := strconv.ParseInt(strings.TrimSpace(*chunk.Usage.Quota.ResetAt), 10, 64); err == nil {
+			s.quotaResetAt = v
+		}
 	}
 }
 
@@ -475,6 +530,9 @@ func (t *requestTrace) event(status int) reqlog.Event {
 		e.TotalTokens = s.totalTokens
 		e.Credit = s.credit
 		e.HasCredit = s.hasCredit
+		e.OriginalCredit = s.originalCredit
+		e.HasOriginalCredit = s.hasOriginalCredit
+		e.QuotaResetAt = s.quotaResetAt
 		e.CacheHitTokens = s.cacheHit
 		e.CacheMissTokens = s.cacheMiss
 	}

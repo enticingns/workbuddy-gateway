@@ -5,6 +5,73 @@
 
 ---
 
+## 2026-11-08：v1.14.0-panel · 真机抓包复核（两域 chat 头族 + SSE 帧）
+
+两端客户端升级后重抓一轮（intl 5.9.4 / CN 5.9.3，`captures_mitm/20261108-103322`，
+两域各 1 条 `POST /v2/chat/completions`，286 / 257 帧）。装机构建与 11-02 基线同 commit
+（intl `fa0a0901` / CN `d4692421`，`releaseDate` 逐位一致），官方 `/v2/update` 对两端当前
+版本均返回 **204**，因此协议层只发现下面两处需要跟进。
+
+### 头族：`baggage` / `X-Agent-Runtime` 不再是 CN 专属
+
+| 头 | intl 5.8.4 | intl 5.9.4 | CN 5.9.3 |
+|---|---|---|---|
+| `baggage` | ✗ | ✓ | ✓ |
+| `X-Agent-Runtime` | ✗ | ✓ | ✓ |
+
+- `headers.go` 去掉「仅 CN」分档，两域都发；`headers_test.go` 断言同步。
+- 其余头族差异只有 realm 固有项：UA 平台段/版本、`X-Domain`、`X-IDE-Version`、
+  `X-Private-Data`（intl `true` / CN `false`），以及 `X-Device-Token`（**intl 有、CN 无**，
+  属既有 [B] 待评估项，本次不动）。
+- 请求体键集与 11-02 完全一致（11 个键），无新增。
+
+### 桌面指纹：`desktop.go` 还是 5.9.2 的老值
+
+`v2/report` 事件体的 `ideVersion`/`extVersion`/`commit`/`releaseDate` 与 `X-IDE-Version`
+一直停在 `5.9.2 / 5f969292… / 1789036585355`，与已按 realm 对齐的 UA 自相矛盾。改为按
+realm 取值：
+
+| | CN | global |
+|---|---|---|
+| 桌面端 | 5.9.3 | 5.9.4 |
+| commit | `d46924219e79332f49c37ccebf27292f87001b19` | `fa0a0901906addaa1a4259f6df347388a5563ded` |
+| releaseDate | `1793093050922` | `1793288804029` |
+
+UA 改走 `c.userAgent(a)`、`X-IDE-Version` 改走 `c.clientVersionFor(a)`，不再有独立常量。
+
+### SSE 帧：usage 新增两个字段（暂未纳入统计）
+
+帧骨架与 11-02 一致（`logprobs:null` / `extra_fields:null` / `function_call:{name:"",arguments:""}`
+空占位 / `tool_calls:[]` / `finish_reason:""` 等噪声形态不变）。`usage` 从 13 键增至 15 键：
+
+- **`original_credit`**（float，本次 `0.31`，而 `credit` 为 `0`——免费模型下原价成本仍下发）；
+- **`quota`** `{model, percent, reset_at, shared_models}`（按模型的额度与重置时间）。
+
+`normalizeFrame` / `normalizeUsageCacheAliases` 对未知非空键是透传，客户端侧无损。
+处理方式选「只加观测、不动计费口径」：`reqlog` 归档新增两个字段
+
+- `original_credit` / `original_credit_known`：原价成本（免费模型下 `credit=0` 时它仍 >0）；
+- `quota_reset_at`：额度重置时间（Unix 秒，上游以字符串下发，解析失败按缺失处理）。
+
+积分统计仍以 `credit` 为准（零回归）；`original_credit` 只进归档供成本分析。
+
+### 文档/工具口径
+
+README 默认值改 `5.9.3 / 5.9.4` + `2.165.0 / 2.165.0`；`cmd/server/config.go` 注释、
+`wb_identity_verify.py` 的 `OFFICIAL_UA` 同步。
+
+### 抓包方法补遗（本轮踩到的两个坑）
+
+1. **CA 必须进 `LocalMachine\Root`**：CLI 的信任链来自 `<configDir>\system-ca-bundle.pem`，
+   该文件由系统根证书导出，只装 `CurrentUser\Root` 时里面没有抓包 CA → CLI 握手直接断
+   （MITM 侧 `UNEXPECTED_EOF_WHILE_READING`，客户端表现为「Network connection failed」）。
+2. **bundle 要预生成**：客户端只在文件**已存在**时才把 `NODE_EXTRA_CA_CERTS` 注入 CLI
+   （`system_ca_bundle.n(configDir)` 为真才注入），缺失时只是异步补生成，赶不上本次 spawn。
+   另外 `<configDir>` 必须是 ASCII 路径（BoringSSL 窄字符 fopen），故 `D:\wbcfg` 之类的
+   junction 仍是必需的（见 `docs/CN真机出站身份-20261028.md` §6.1）。
+
+---
+
 ## 2026-11-02：跟进客户端 5.9.4（global 轨版本号）
 
 官方国际版桌面端已从 5.8.4 升到 **5.9.4**，内嵌 CLI 从 2.161.0 升到 **2.165.0**，网关默认出站身份同步跟进。
