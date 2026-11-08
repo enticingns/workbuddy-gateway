@@ -7,7 +7,7 @@ data/
 .env
 .env.*
 
-# Binaries (anchored to repo root only 鈥?bare "login"/"credit" would also ignore cmd/login/, cmd/credit/)
+# Binaries (anchored to repo root only — bare "login"/"credit" would also ignore cmd/login/, cmd/credit/)
 /login
 /credit
 /wb2api
@@ -31,7 +31,8 @@ PLAN.md
 SPEC.md
 docs/
 
-# 璁捐/璁″垝鏂囨。锛堜絾 README.md 涓?CHANGELOG.md 蹇呴』杩涚増鏈簱锛?# defaultprompt.md 鏄?go:embed 璧勬簮锛坕nternal/prompt锛夛紝蹇呴』杩涚増鏈簱锛屽惁鍒?CI 缂栬瘧澶辫触
+# 设计/计划文档（但 README.md 与 CHANGELOG.md 必须进版本库）
+# defaultprompt.md 是 go:embed 资源（internal/prompt），必须进版本库，否则 CI 编译失败
 *.md
 !README.md
 !CHANGELOG.md
@@ -42,12 +43,13 @@ docs/
 /login.exe
 /credit.exe
 
-# 鏈湴楠岃瘉宸ュ叿锛堝垽鎹€嗗悜杩囩▼鑴氭湰锛岀粨璁烘矇娣€浜?data/desktop-task-protocol.md锛?/cmd/desktopverify*/
+# 本地验证工具（判据逆向过程脚本，结论沉淀于 data/desktop-task-protocol.md）
+/cmd/desktopverify*/
 *.zip
 server.exe
 .DS_Store
 
-# 鐪熸満鎶撳寘浜х墿锛堝惈璇锋眰浣撱€佽姹傚ご銆佽处鍙锋爣璇嗐€佹湰鍦?CA 绉侀挜鈥斺€旂粷涓嶅叆搴擄級
+# 真机抓包产物（含请求体、请求头、账号标识、本地 CA 私钥——绝不入库）
 tools/wb-capture/captures/
 tools/wb-capture/captures_mitm/
 tools/wb-capture/ca/
@@ -62,16 +64,17 @@ tools/wb-capture/*.bak-orig
 tools/wb-capture/profile*.json
 tools/wb-capture/identity-verify-result.json
 
-# Session/tmp artifacts (history dumps, tokens) - NEVER track
+# 会话/临时产物（历史转储、token）——绝不入库
 .tmp*
 **/.tmp*
 *.tmp_*
 **/*.tmp_*
-# ssh / credentials
+# SSH / 凭据
 id_rsa*
 id_ed25519*
 *.jwt
 *.jsonl
+
 # .gitignore 自身的历史备份（含旧规则，勿提交）
 *.bak-priv*
 .gitignore.bak*
