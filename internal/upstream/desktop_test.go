@@ -41,22 +41,22 @@ func TestReportDesktopEventFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("report desktop: %v", err)
 	}
-	if want := "WorkBuddy/5.9.3 WorkBuddy/5.9.3 CLI/2.165.0"; gotUA != want {
-		t.Errorf("UA=%q want %q（CN 真机 5.9.3 形态）", gotUA, want)
+	if want := "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0"; gotUA != want {
+		t.Errorf("UA=%q want %q（CN 真机 5.11.3 形态）", gotUA, want)
 	}
 	if len(got) != 1 {
 		t.Fatalf("events=%d want 1", len(got))
 	}
 	ev := got[0]
-	// 指纹版本必须与出站 UA 同源（曾出现 UA 5.9.2 而真机已 5.9.3/5.9.4 的漂移）。
-	if ev["ideVersion"] != "5.9.3" || ev["extVersion"] != "5.9.3" {
-		t.Errorf("ideVersion/extVersion=%v/%v want 5.9.3/5.9.3", ev["ideVersion"], ev["extVersion"])
+	// 指纹版本必须与出站 UA 同源（曾出现 UA 5.9.2 而真机已 5.11.3/5.9.4 的漂移）。
+	if ev["ideVersion"] != "5.11.3" || ev["extVersion"] != "5.11.3" {
+		t.Errorf("ideVersion/extVersion=%v/%v want 5.11.3/5.11.3", ev["ideVersion"], ev["extVersion"])
 	}
-	if ev["commit"] != "d46924219e79332f49c37ccebf27292f87001b19" {
-		t.Errorf("commit=%v want CN 5.9.3 commit", ev["commit"])
+	if ev["commit"] != "ecace0f7028166695994300182295329b8b95449" {
+		t.Errorf("commit=%v want CN 5.11.3 commit", ev["commit"])
 	}
-	if ev["releaseDate"] != float64(1793093050922) {
-		t.Errorf("releaseDate=%v want 1793093050922", ev["releaseDate"])
+	if ev["releaseDate"] != float64(1794502175226) {
+		t.Errorf("releaseDate=%v want 1794502175226", ev["releaseDate"])
 	}
 	if ev["extName"] != "workbuddy-desktop" {
 		t.Errorf("extName=%v want workbuddy-desktop", ev["extName"])
@@ -113,7 +113,7 @@ func TestSetAppearanceTheme(t *testing.T) {
 		if r.URL.Path != "/v2/user-asset/appearance/set" {
 			t.Errorf("path=%s want /v2/user-asset/appearance/set", r.URL.Path)
 		}
-		if want := "WorkBuddy/5.9.3 WorkBuddy/5.9.3 CLI/2.165.0"; r.Header.Get("User-Agent") != want {
+		if want := "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0"; r.Header.Get("User-Agent") != want {
 			t.Errorf("UA=%q want %q", r.Header.Get("User-Agent"), want)
 		}
 		raw, _ := io.ReadAll(r.Body)
@@ -139,7 +139,7 @@ func TestDesktopFingerprintRealm(t *testing.T) {
 	global := &auth.Auth{AccessToken: "at", UID: "u-gl", Domain: "www.workbuddy.ai"}
 	global.BackfillRealm()
 
-	if got, want := c.userAgent(cn), "WorkBuddy/5.9.3 WorkBuddy/5.9.3 CLI/2.165.0"; got != want {
+	if got, want := c.userAgent(cn), "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0"; got != want {
 		t.Errorf("CN UA=%q want %q", got, want)
 	}
 	if got, want := c.userAgent(global), "WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0"; got != want {
@@ -147,9 +147,9 @@ func TestDesktopFingerprintRealm(t *testing.T) {
 	}
 
 	fpCN, fpGL := c.desktopFingerprint(cn), c.desktopFingerprint(global)
-	if fpCN["ideVersion"] != "5.9.3" || fpCN["commit"] != desktopCommitCN ||
+	if fpCN["ideVersion"] != "5.11.3" || fpCN["commit"] != desktopCommitCN ||
 		fpCN["releaseDate"] != desktopReleaseDateCN {
-		t.Errorf("CN 指纹=%v/%v/%v want 5.9.3/%s/%d",
+		t.Errorf("CN 指纹=%v/%v/%v want 5.11.3/%s/%d",
 			fpCN["ideVersion"], fpCN["commit"], fpCN["releaseDate"],
 			desktopCommitCN, desktopReleaseDateCN)
 	}

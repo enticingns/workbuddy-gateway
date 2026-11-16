@@ -120,10 +120,10 @@ func TestChatHeadersMatchCapturedBaseline(t *testing.T) {
 		t.Errorf("Accept = %q, want application/json（官方 chat 实测值）", got)
 	}
 	if got := cn.Get("X-Private-Data"); got != "false" {
-		t.Errorf("CN X-Private-Data = %q, want false（5.9.3 实测）", got)
+		t.Errorf("CN X-Private-Data = %q, want false（5.11.3 实测）", got)
 	}
 	if cn.Get("baggage") == "" || cn.Get("X-Agent-Runtime") != "local-agent" {
-		t.Errorf("CN 应带 baggage + X-Agent-Runtime: local-agent（5.9.3 实测），got baggage=%q runtime=%q",
+		t.Errorf("CN 应带 baggage + X-Agent-Runtime: local-agent（5.11.3 实测），got baggage=%q runtime=%q",
 			cn.Get("baggage"), cn.Get("X-Agent-Runtime"))
 	}
 	// 链路三套格式同源：traceparent/b3 必须复用 X-B3-TraceId/SpanId。
@@ -205,5 +205,105 @@ func TestXDomainFollowsHost(t *testing.T) {
 				t.Errorf("X-Domain = %q, want %q", got, tc.wantDom)
 			}
 		})
+	}
+}
+
+// TestXClientHeadersGatedByVersion 断言 X-Client-* 三头族按客户端版本判定下发。
+//
+// 真机抓包（2026-11-16，captures_mitm/20261116-091004）：
+//   - CN 5.11.3：全部请求都带 `5.11.3` / `windows` / `WorkBuddy`（chat、report、
+//     portal、mcp 等路径 300+ 条全命中）；
+//   - intl 5.9.4：chat + 全量路径一条都不带（11-08 基线 154 条同样零命中）。
+func TestXClientHeadersGatedByVersion(t *testing.T) {
+	cases := []struct {
+		name     string
+		client   *Client
+		auth     *auth.Auth
+		wantVer  string
+		wantProd string
+	}{
+		{
+			name:     "CN 默认 5.11.3 → 带三头",
+			client:   &Client{},
+			auth:     &auth.Auth{UID: "u1", AccessToken: "at"},
+			wantVer:  "5.11.3",
+			wantProd: "WorkBuddy",
+		},
+		{
+			name:     "intl 默认 5.9.4 → 不带（官方 5.9.4 实测不发）",
+			client:   &Client{},
+			auth:     &auth.Auth{UID: "u2", AccessToken: "at", Domain: "www.workbuddy.ai"},
+			wantVer:  "",
+			wantProd: "",
+		},
+		{
+			name:     "intl 显式抬到 6.0.0 → 带，且产品段跟随 applicationName",
+			client:   &Client{ClientVersion: "6.0.0"},
+			auth:     &auth.Auth{UID: "u3", AccessToken: "at", Domain: "www.workbuddy.ai"},
+			wantVer:  "6.0.0",
+			wantProd: "workbuddy-ai",
+		},
+		{
+			name:     "低版本显式配置 → 不带",
+			client:   &Client{ClientVersion: "5.10.9"},
+			auth:     &auth.Auth{UID: "u4", AccessToken: "at"},
+			wantVer:  "",
+			wantProd: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, "https://example.com/v2/chat/completions", nil)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			tc.client.CommonHeaders(req, tc.auth)
+			if got := req.Header.Get("X-Client-Version"); got != tc.wantVer {
+				t.Errorf("X-Client-Version = %q, want %q", got, tc.wantVer)
+			}
+			if got := req.Header.Get("X-Client-Product"); got != tc.wantProd {
+				t.Errorf("X-Client-Product = %q, want %q", got, tc.wantProd)
+			}
+			wantPlatform := ""
+			if tc.wantVer != "" {
+				wantPlatform = "windows"
+			}
+			if got := req.Header.Get("X-Client-Platform"); got != wantPlatform {
+				t.Errorf("X-Client-Platform = %q, want %q", got, wantPlatform)
+			}
+		})
+	}
+
+	// billing 域不走 CommonHeaders，必须单独注入同一套。
+	breq, err := http.NewRequest(http.MethodPost, "https://example.com/billing/meter/get-user-resource-summary", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	(&Client{}).BillingHeaders(breq, &auth.Auth{UID: "u5", AccessToken: "at"})
+	if got := breq.Header.Get("X-Client-Version"); got != "5.11.3" {
+		t.Errorf("billing X-Client-Version = %q, want 5.11.3", got)
+	}
+}
+
+// TestClientVersionAtLeast 覆盖版本比较的边界（解析失败宁可不下发）。
+func TestClientVersionAtLeast(t *testing.T) {
+	cases := []struct {
+		ver  string
+		want bool
+	}{
+		{"5.11.3", true},
+		{"5.11.0", true},
+		{"5.12.0", true},
+		{"6.0.0", true},
+		{"5.10.9", false},
+		{"4.11.0", false},
+		{"5", false},
+		{"", false},
+		{"x.y.z", false},
+	}
+	for _, tc := range cases {
+		if got := clientVersionAtLeast(tc.ver, 5, 11); got != tc.want {
+			t.Errorf("clientVersionAtLeast(%q) = %v, want %v", tc.ver, got, tc.want)
+		}
 	}
 }

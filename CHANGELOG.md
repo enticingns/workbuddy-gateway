@@ -5,6 +5,100 @@
 
 ---
 
+## 2026-11-16：v1.14.2-panel · CN 客户端升 5.11.3 的抓包复核 + `X-Client-*` 三头跟进
+
+国内客户端从 5.9.3 升到 5.11.3（内嵌 CLI 2.165.0 → 2.176.0），国际线仍停在 5.9.4 / CLI 2.165.0。
+两域各重抓一轮（CN `captures_mitm/20261116-091004`：340+ 条请求、7 条 `POST /v2/chat/completions`、
+610 帧；intl `captures_mitm/20261116-103424`：1 条 chat、34 帧），协议层只有下面三处需要跟进。
+
+### 版本身份：两域不同轨，不是「都升到最新」
+
+| | CN | 国际 |
+|---|---|---|
+| 桌面端 | **5.11.3**（`5.11.3.43806934-ecace0f7`） | 5.9.4（`5.9.4.42593613-fa0a0901`） |
+| 内嵌 CLI | **2.176.0** | 2.165.0 |
+| commit | `ecace0f7028166695994300182295329b8b95449` | `fa0a0901906addaa1a4259f6df347388a5563ded` |
+| releaseDate | `1794502175226` | `1793288804029` |
+
+判定依据是两域各自的官方清单 `/workbuddy/saas/version.json` 的 `win32-x64-user` 段，加上安装包
+`resources/app.asar.unpacked/cli/product.json`（`genieVersion`/`commit`/`date`）与同级 `cli/package.json`。
+同一时刻国内线下发 5.11.3、国际线下发 5.9.4；国际安装包 SHA256 `6ff4be43…` 与清单
+`win32-x64-user.gray.hashes.exe` 逐位一致，说明下载到的就是官方最新构建，没有更多可升。
+
+两域 `applicationName`（`WorkBuddy` / `workbuddy-ai`）与数据目录（`.workbuddy` / `.workbuddy-ai`）
+都不同，**不能拿国内安装包去装国际版**——那会把两个身份和用户材料混成一份。
+
+`headers.go` 默认值改为 CN `5.11.3` / CLI `2.176.0`（国际保持 `5.9.4` / `2.165.0`），
+`desktop.go` 的 CN `commit` / `releaseDate` 同步——现在与 `v2/report` 实测值逐位一致，
+不再出现「UA 说 5.11.3、上报体说 5.9.3」的漂移。
+
+### 新增头族：`X-Client-Version` / `X-Client-Platform` / `X-Client-Product`
+
+| 头 | intl 5.9.4 | CN 5.11.3 |
+|---|---|---|
+| `X-Client-Version` | ✗ | ✓ `5.11.3` |
+| `X-Client-Platform` | ✗ | ✓ `windows` |
+| `X-Client-Product` | ✗ | ✓ `WorkBuddy` |
+
+CN 侧是**全量请求**命中（chat / report / portal / mcp / billing 300+ 条），intl 侧零命中
+（本批 63 条 + 11-08 基线 154 条）。
+
+实现分两处：`CommonHeaders`（chat 走 `ChatHeaders` → common；refresh 也走 common）与
+`BillingHeaders`（billing/portal 不走 common，单独注入）。判定条件是**客户端版本 ≥ 5.11**，
+不按域硬编码——国际线将来跟到 5.11+ 会自动带上，不用再改这里；版本号解析失败时选择不发
+（宁可少一个头，也不发出自相矛盾的身份）。产品段与 UA 第二段同源（CN `WorkBuddy` /
+global `workbuddy-ai`），平台段恒 `windows`（与 `x-stainless-os` 同源）。
+
+单测：`TestXClientHeadersGatedByVersion`（CN 带 / intl 不带 / intl 显式抬到 6.0.0 时带且产品段跟随
+applicationName / 低版本 5.10.9 不带 / billing 域同样注入）+ `TestClientVersionAtLeast` 覆盖解析边界。
+
+### 其余实测差异（只归档，不改代码）
+
+| 观测 | 结论 |
+|---|---|
+| 请求体键集 11 → 12，新增 `cache_retention`（本次值 `long`） | 客户端侧参数，网关透传，不合成 |
+| `max_tokens` 64000→128000、`temperature` 0.9→1、`reasoning_effort` high→max | 随模型/会话变化，不是身份常量，不写死 |
+| SSE `usage` 键集与 11-08 一致（14 键，本次无 `original_credit`） | `reqlog` 归档对未知非空键透传，零改动 |
+| `X-Device-Token` 在 CN 5.11.3 上出现（11-08 的 CN 5.9.3 不发） | 网关仍「有则发」；CN 凭证通常没有该 token，本轮不伪造 |
+| `x-stainless-*` 七头、`acp-connection-id`、`baggage`、`X-Agent-Runtime`、会话头族 | 与 11-08 完全一致，形状无变化 |
+
+### 国际版补抓成功：头族与 11-08 基线**逐项一致**
+
+首轮抓包失败后（原因见下），修好出口并补齐信任链，国际版 chat 补抓成功
+（`captures_mitm/20261116-103424` 的 `0073_POST_v2_chat_completions.json`，200 / 34 帧）：
+
+| 项 | 结果 |
+|---|---|
+| chat 头数 | 44（与 11-08 基线**完全相同**，added/removed 都是空集） |
+| UA | `WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0`（= 网关 global 默认值） |
+| `X-Client-*` 三头 | **全部缺失**（证实 `>= 5.11` 的版本门控是对的，intl 5.9.4 不该发） |
+| `X-Private-Data` / `X-Domain` / `X-Product` | `true` / `www.workbuddy.ai` / `SaaS` |
+| `X-Device-Token` | 有（23 字符，intl 一直如此） |
+| 请求体键集 | 8 个（本轮无 `reasoning_effort`/`reasoning_summary`/`verbosity`，属按模型下发的可选参数，不是身份差异） |
+| SSE `usage` | 14 键，与 CN 5.11.3 同一集合（无 `original_credit`） |
+
+结论：**国际侧不需要改代码**，现有 global 默认值（5.9.4 / 2.165.0）与真机一致。
+
+### 抓包环境补遗（CN / intl 两侧）
+
+1. DSH 运行时的 Python 缺 `cryptography`，`pip install cryptography` 之后 `wb_mitm_capture.py` 才能
+   起 MITM（否则 `ModuleNotFoundError`，代理直接退出）。
+2. CA 只需 `certutil -user -addstore -f root ca\ca.crt.pem` 导入**当前用户**根
+   （`Import-Certificate` 在非交互上下文会因「此操作中不允许使用 UI」失败）；CLI 侧靠
+   `NODE_EXTRA_CA_CERTS` 即可，无需管理员权限、也不必再往 `LocalMachine\Root` 装。
+3. 客户端的代理取自 `~/.workbuddy{,-ai}/settings.json` 的 `http.proxy`（不是环境变量），
+   抓包期间要把它指向 `127.0.0.1:8888`，抓完还原；本轮备份为
+   `settings.json.bak-versioncheck-20261116-090402`。**注意**：`certutil -user -delstore` 删除根证书会弹
+   UI 确认框，非交互会话里会一直挂着——收尾时得人工点一下。
+4. **发 chat 的是 CLI 子进程，且它是 `envCount=0` 启动的**（`[SandboxCLIClient] cmd=RunExecutable |
+   envCount=0`）：`HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS` / `ACC_PRODUCT_CONFIG_PATH` 都传不进去。
+   国际版能抓到的关键是三件事同时满足：客户端 `settings.json` 的 `http.proxy` 指向 MITM、
+   `WORKBUDDY_CONFIG_DIR` 指到 **ASCII 路径 junction**（`D:\wbcfg-ai`）且其中预生成含抓包 CA 的
+   `system-ca-bundle.pem`（BoringSSL 窄字符 fopen 打不开中文路径）、以及本机能直连上游。
+   实测把磁盘 `product.json` 的 endpoint 改到明文代理**只覆盖 renderer/daemon，抓不到 chat**。
+
+---
+
 ## 2026-11-08：v1.14.1-panel · 真机抓包复核（两域 chat 头族 + SSE 帧）+ `X-Domain` 对齐 Host
 
 两端客户端升级后重抓一轮（intl 5.9.4 / CN 5.9.3，`captures_mitm/20261108-103322`，

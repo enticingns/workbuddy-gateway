@@ -1,11 +1,13 @@
 // Package headers 构造三类上游请求头（common / chat / billing / refresh）。
 // 规则来自 docs/api-reference.md §0/§4/§6，出站头族以真机抓包（2026-10-28，
-// CN 5.9.3 / intl 5.8.4 双域全量请求）为基准；2026-11-02 按客户端 5.9.4 跟进版本号。
+// CN 5.9.3 / intl 5.8.4 双域全量请求）为基准；2026-11-02 按客户端 5.9.4 跟进版本号；
+// 2026-11-16 按 CN 5.11.3 / intl 5.9.4 真机抓包复核（新增 X-Client-* 三头）。
 package upstream
 
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -14,15 +16,17 @@ import (
 )
 
 const (
-	// 官方分发包实测版本（2026-11-02：安装包解包 + 官方 /v2/update 核对）——两版**不同轨**：
-	//   CN     桌面 5.9.3（commit d469242）/ 内嵌 CLI 2.165.0
+	// 官方分发包实测版本（2026-11-16：安装包解包 + 官方 saas/version.json 清单 + 真机抓包复核）
+	// ——两版**不同轨**：
+	//   CN     桌面 5.11.3（commit ecace0f）/ 内嵌 CLI 2.176.0
 	//   global 桌面 5.9.4（commit fa0a090）/ 内嵌 CLI 2.165.0
-	// 变更史：2026-10-28 时 global 为 5.8.4 / CLI 2.161.0；11-02 客户端已升 5.9.4 / 2.165.0
-	// （官方更新接口对 5.9.4 返回 204 = 已是最新）。product.json 的 applicationName 仍为
-	// workbuddy-ai，故 UA 第二段不变，只有版本数字跟进。
+	// 变更史：2026-10-28 global 5.8.4 / CLI 2.161.0；11-02 两域 5.9.3 + 5.9.4 / CLI 2.165.0；
+	// 11-16 CN 追到 5.11.3 / CLI 2.176.0（官方清单 win32-x64-user = 5.11.3.43806934-ecace0f7），
+	// 同一时刻国际线清单仍是 5.9.4.42593613-fa0a0901，无更新版本下发。
+	// product.json 的 applicationName 两域不变（WorkBuddy / workbuddy-ai），故 UA 第二段不动。
 	// config upstream.client_version / cli_version 非空时**同时覆盖两域**（兼容旧配置）。
-	defaultClientVersionCN     = "5.9.3"
-	defaultCliVersionCN        = "2.165.0"
+	defaultClientVersionCN     = "5.11.3"
+	defaultCliVersionCN        = "2.176.0"
 	defaultClientVersionGlobal = "5.9.4"
 	defaultCliVersionGlobal    = "2.165.0"
 
@@ -90,7 +94,7 @@ func (c *Client) clientVersion() string {
 }
 
 // clientVersionFor 按账号 realm 取桌面端版本：显式 ClientVersion 优先（同时作用于两域），
-// 否则 CN 5.9.3 / global 5.9.4（官方两个分发包不同轨，实测值）。
+// 否则 CN 5.11.3 / global 5.9.4（官方两个分发包不同轨，实测值）。
 func (c *Client) clientVersionFor(a *auth.Auth) string {
 	if c != nil && c.ClientVersion != "" {
 		return c.ClientVersion
@@ -107,7 +111,7 @@ func (c *Client) cliVersion() string {
 }
 
 // cliVersionFor 按账号 realm 取内嵌 CLI 版本：显式 CliVersion 优先，
-// 否则 CN 2.165.0 / global 2.165.0（取自各自安装包 package.json / customPackage）。
+// 否则 CN 2.176.0 / global 2.165.0（取自各自安装包 package.json / customPackage）。
 func (c *Client) cliVersionFor(a *auth.Auth) string {
 	if c != nil && c.CliVersion != "" {
 		return c.CliVersion
@@ -261,6 +265,52 @@ func (c *Client) CommonHeaders(req *http.Request, a *auth.Auth) {
 	// X-Domain 声明域（官方全量请求 166/166 命中），取值恒等于本次请求的 Host
 	// （见 realmDomainFor：base host 优先，落盘 domain 次之）。
 	req.Header.Set("X-Domain", c.realmDomainFor(a, c.chatBase(a)))
+	c.injectXClientHeaders(req, a)
+}
+
+// injectXClientHeaders 注入 X-Client-Version / X-Client-Platform / X-Client-Product。
+//
+// 真机抓包（2026-11-16，`captures_mitm/20261116-091004`）：
+//   - CN 5.11.3：全量请求都带，取值 `5.11.3` / `windows` / `WorkBuddy`（同批 300+ 条，
+//     覆盖 chat、report、portal、mcp 等所有路径）；
+//   - intl 5.9.4：一条都不带（同批 63 条 + 11-08 基线 154 条全零命中）。
+//
+// 故按「客户端版本是否 >= 5.11」判定，而不是按域硬编码：intl 将来跟到 5.11 及以上
+// 会自动带上，不用再改这里。平台段恒 `windows`（两域都跑在 Windows 上是既定前提，
+// 与 x-stainless-os 同源），产品段与 UA 第二段同源（CN `WorkBuddy` / global `workbuddy-ai`）。
+func (c *Client) injectXClientHeaders(req *http.Request, a *auth.Auth) {
+	ver := c.clientVersionFor(a)
+	if !clientVersionAtLeast(ver, 5, 11) {
+		return
+	}
+	product := "WorkBuddy"
+	if a != nil && a.IsGlobal() {
+		product = "workbuddy-ai"
+	}
+	req.Header.Set("X-Client-Version", ver)
+	req.Header.Set("X-Client-Platform", "windows")
+	req.Header.Set("X-Client-Product", product)
+}
+
+// clientVersionAtLeast 解析 `major.minor[.patch]` 并比较（官方版本号恒为三段数字；
+// 解析失败返回 false，即不注入——宁可少发一个头，也不发出自相矛盾的身份）。
+func clientVersionAtLeast(ver string, wantMajor, wantMinor int) bool {
+	parts := strings.SplitN(strings.TrimSpace(ver), ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return false
+	}
+	if major != wantMajor {
+		return major > wantMajor
+	}
+	return minor >= wantMinor
 }
 
 // acceptLanguageFor 按账号 realm 返回 Accept-Language：global → en-US，cn → zh-CN。
@@ -410,7 +460,7 @@ func (c *Client) injectConversationHeaders(req *http.Request, a *auth.Auth, meta
 	req.Header.Set("traceparent", "00-"+b3Trace+"-"+span+"-01")
 	req.Header.Set("b3", b3Trace+"-"+span+"-1")
 	// baggage / X-Agent-Runtime 两域都发（真机抓包：intl 5.8.4 **不带**，5.9.4 起
-	// 与 CN 5.9.3 一致地带上；升级后 intl chat 头族只多这两个，无减少）。
+	// 与 CN 5.11.3 一致地带上；升级后 intl chat 头族只多这两个，无减少）。
 	// baggage 的 buddyId/buddyName 官方置空串，两个 id 取自会话头族。
 	req.Header.Set("baggage", "buddyId=,buddyName=,codebuddy.session_id="+conversationID+
 		",codebuddy.conversation_request_id="+convReqID)
@@ -481,7 +531,7 @@ func (c *Client) injectAttribution(req *http.Request, a *auth.Auth) {
 	req.Header.Set("X-IDE-Type", ideName)
 	req.Header.Set("X-IDE-Version", c.clientVersionFor(a))
 	req.Header.Set("X-Product", "SaaS")
-	// X-Private-Data 按 realm 分档（实测差异）：intl 5.8.4 恒 `true`，CN 5.9.3 恒
+	// X-Private-Data 按 realm 分档（实测差异）：intl 恒 `true`，CN 恒
 	// `false`。这是两版客户端隐私开关的默认值差异，两域一致写死会与真机不符。
 	if a != nil && a.IsGlobal() {
 		req.Header.Set("X-Private-Data", "true")
@@ -534,6 +584,8 @@ func (c *Client) BillingHeaders(req *http.Request, a *auth.Auth) {
 	// X-Domain 同样跟随本次 base 的 Host（billing 走 billingBase）。
 	req.Header.Set("X-Product", "SaaS")
 	req.Header.Set("X-Domain", c.realmDomainFor(a, c.billingBase(a)))
+	// X-Client-*：billing/portal 路径同样带（billing 域不走 CommonHeaders，单独注入）。
+	c.injectXClientHeaders(req, a)
 	if a.UID != "" {
 		req.Header.Set("X-User-Id", a.UID)
 	}

@@ -1,11 +1,11 @@
-// desktop.go 桌面客户端行为指纹上报（版本按 realm 分档：CN 5.9.3 / global 5.9.4）。
+// desktop.go 桌面客户端行为指纹上报（版本按 realm 分档：CN 5.11.3 / global 5.9.4）。
 //
 // 来源：2026-09-12 Sunny 抓包实测（data/desktop-task-protocol.md）。桌面端点亮
 // 「需电脑端」类任务的关键不是独立端点，而是同一 POST /v2/report 通道上
 // **不同的客户端指纹**：
 //
 //	POST https://copilot.tencent.com/v2/report        ← chatBase（CLI 上报走 billingBase）
-//	User-Agent: WorkBuddy/5.9.3 WorkBuddy/5.9.3 CLI/2.165.0            （CN 真机）
+//	User-Agent: WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0          （CN 真机）
 //	            WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0        （global 真机）
 //	X-Domain: copilot.tencent.com, X-Product: SaaS, X-User-Id: <uid>
 //	Body: [ {...event...} ]                           ← 数组
@@ -41,14 +41,14 @@ const (
 	desktopReportPath    = "/v2/report"
 	desktopAppearanceSet = "/v2/user-asset/appearance/set"
 
-	// 桌面端指纹按 realm 分档（真机抓包基线 2026-11-02）：
-	//   CN     5.9.3 / commit d4692421… / releaseDate 1793093050922
+	// 桌面端指纹按 realm 分档（真机抓包基线 2026-11-16）：
+	//   CN     5.11.3 / commit ecace0f7… / releaseDate 1794502175226
 	//   global 5.9.4 / commit fa0a0901… / releaseDate 1793288804029
 	// 版本号与 UA 由 headers.go 的 clientVersionFor/cliVersionFor/userAgent 统一提供，
 	// 这里只补 report 事件体里那两个 headers.go 不覆盖的字段。
-	desktopCommitCN          = "d46924219e79332f49c37ccebf27292f87001b19"
+	desktopCommitCN          = "ecace0f7028166695994300182295329b8b95449"
 	desktopCommitGlobal      = "fa0a0901906addaa1a4259f6df347388a5563ded"
-	desktopReleaseDateCN     = int64(1793093050922)
+	desktopReleaseDateCN     = int64(1794502175226)
 	desktopReleaseDateGlobal = int64(1793288804029)
 )
 
@@ -61,7 +61,7 @@ func desktopCommitFor(a *auth.Auth) string {
 }
 
 // desktopReleaseDateFor 按账号 realm 取桌面指纹的 releaseDate：product.json 的 date
-// 按本地时区解析成毫秒时间戳（与真机上报值逐位一致：CN 1793093050922 / global 1793288804029）。
+// 按本地时区解析成毫秒时间戳（与真机上报值逐位一致：CN 1794502175226 / global 1793288804029）。
 func desktopReleaseDateFor(a *auth.Auth) int64 {
 	if a != nil && a.IsGlobal() {
 		return desktopReleaseDateGlobal
