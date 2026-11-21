@@ -1,4 +1,4 @@
-// desktop.go 桌面客户端行为指纹上报（版本按 realm 分档：CN 5.11.3 / global 5.9.4）。
+// desktop.go 桌面客户端行为指纹上报（版本按 realm 分档：CN 5.11.3 / global 5.11.4）。
 //
 // 来源：2026-09-12 Sunny 抓包实测（data/desktop-task-protocol.md）。桌面端点亮
 // 「需电脑端」类任务的关键不是独立端点，而是同一 POST /v2/report 通道上
@@ -6,7 +6,7 @@
 //
 //	POST https://copilot.tencent.com/v2/report        ← chatBase（CLI 上报走 billingBase）
 //	User-Agent: WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0          （CN 真机）
-//	            WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0        （global 真机）
+//	            workbuddy-ai/5.11.4 workbuddy-ai/5.11.4 CLI/2.176.0    （global 真机，5.11.4）
 //	X-Domain: copilot.tencent.com, X-Product: SaaS, X-User-Id: <uid>
 //	Body: [ {...event...} ]                           ← 数组
 //
@@ -35,21 +35,24 @@ import (
 	"time"
 
 	"github.com/enticingns/workbuddy-gateway/internal/auth"
+	"github.com/enticingns/workbuddy-gateway/internal/session"
 )
 
 const (
 	desktopReportPath    = "/v2/report"
 	desktopAppearanceSet = "/v2/user-asset/appearance/set"
 
-	// 桌面端指纹按 realm 分档（真机抓包基线 2026-11-16）：
+	// 桌面端指纹按 realm 分档（真机抓包基线 2026-11-21）：
 	//   CN     5.11.3 / commit ecace0f7… / releaseDate 1794502175226
-	//   global 5.9.4 / commit fa0a0901… / releaseDate 1793288804029
+	//   global 5.11.4 / commit 0026dff0… / releaseDate 1794817062903
 	// 版本号与 UA 由 headers.go 的 clientVersionFor/cliVersionFor/userAgent 统一提供，
 	// 这里只补 report 事件体里那两个 headers.go 不覆盖的字段。
+	// global 的 commit/releaseDate 取自 2026-11-21 国际版 5.11.4 真机 /v2/report 实测值
+	// （releaseDate 是 product.json 的 date 按本地时区 +08:00 解析的毫秒数，与官方一致）。
 	desktopCommitCN          = "ecace0f7028166695994300182295329b8b95449"
-	desktopCommitGlobal      = "fa0a0901906addaa1a4259f6df347388a5563ded"
+	desktopCommitGlobal      = "0026dff06ce8414140e6f2fa731049855c3ecc6f"
 	desktopReleaseDateCN     = int64(1794502175226)
-	desktopReleaseDateGlobal = int64(1793288804029)
+	desktopReleaseDateGlobal = int64(1794817062903)
 )
 
 // desktopCommitFor 按账号 realm 取桌面指纹的 commit（各自安装包 product.json 的 commit）。
@@ -84,7 +87,7 @@ type DesktopEvent map[string]any
 
 // desktopFingerprint 公共桌面指纹字段（注入每个事件，覆盖同名业务键）。
 // 版本/commit/releaseDate 按 realm 取值，与 headers.go 的出站 UA 同源，
-// 避免出现「UA 说 5.9.4、上报体说 5.9.2」这种自相矛盾的身份。
+// 避免出现「UA 说 5.11.4、上报体说 5.9.2」这种自相矛盾的身份。
 func (c *Client) desktopFingerprint(a *auth.Auth) map[string]any {
 	now := time.Now().UnixMilli()
 	ver := c.clientVersionFor(a)
@@ -144,13 +147,19 @@ func (c *Client) ReportDesktopEvent(a *auth.Auth, events ...DesktopEvent) error 
 	req.Header.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
-	req.Header.Set("User-Agent", c.userAgent(a))
+	// 非 chat 桌面 RPC：5.11 起官方 UA 首段也是 applicationName（intl 5.11.4 实测）。
+	req.Header.Set("User-Agent", c.desktopRPCUAFor(a))
 	req.Header.Set("X-Domain", c.desktopBase(a))
 	req.Header.Set("X-Product", "SaaS")
-	req.Header.Set("X-Request-ID", deriveID(a, "req")+fmt.Sprintf("%d", time.Now().UnixNano()%1e6))
+	// X-Request-ID：官方 /v2/report 用 32 位 hex（与 chat 的消息级 ID 同形状，
+	// 2026-11-21 两域实测：`79ae54e7bb084b62a454c2cf17062ba3` 一类），逐请求新值。
+	req.Header.Set("X-Request-ID", session.NewMessageID())
 	if a.UID != "" {
 		req.Header.Set("X-User-Id", a.UID)
 	}
+	// X-Client-* 与设备风控头：官方 5.11+ 的 /v2/report 与 chat 一样带（2026-11-21 实测）。
+	c.injectXClientHeaders(req, a)
+	c.injectDeviceToken(req, a)
 	_, err = c.doJSON(req)
 	return err
 }
@@ -422,7 +431,8 @@ func (c *Client) MarketExpertList(a *auth.Auth, expertType string) ([]MarketExpe
 	}
 	req.Header.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", c.userAgent(a))
+	// /portal/* 属非 chat 桌面 RPC：5.11 起 UA 首段跟随 applicationName。
+	req.Header.Set("User-Agent", c.desktopRPCUAFor(a))
 	req.Header.Set("X-Domain", c.chatBase(a))
 	req.Header.Set("X-Product", "SaaS")
 	if a.UID != "" {

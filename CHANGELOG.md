@@ -5,7 +5,70 @@
 
 ---
 
-## 2026-11-16：v1.14.2-panel · CN 客户端升 5.11.3 的抓包复核 + `X-Client-*` 三头跟进
+## 2026-11-21：v1.15.0-panel · 国际客户端 5.9.4 → 5.11.4 的抓包复核 + UA 首段/链路头对齐
+
+国际线这次跳了两档：桌面端 **5.9.4 → 5.11.4**，内嵌 CLI **2.165.0 → 2.176.0**（与国内线同版本）。
+国内线仍是 **5.11.3 / CLI 2.176.0**，清单无更新，只做了一轮复核。两域各重抓一轮
+（intl `captures_mitm/20261121-221149`、CN `captures_mitm/20261121-223850`），
+chat 头族逐项比对后协议层有五处要跟进。
+
+### 版本身份：两域仍不同轨，各自跟各自清单
+
+| | CN | 国际 |
+|---|---|---|
+| 桌面端 | 5.11.3（`5.11.3.43806934-ecace0f7`，无更新） | **5.11.4**（`5.11.4.44121853-0026dff0`） |
+| 内嵌 CLI | 2.176.0 | **2.176.0** |
+| commit | `ecace0f7028166695994300182295329b8b95449` | `0026dff06ce8414140e6f2fa731049855c3ecc6f` |
+| releaseDate | `1794502175226` | `1794788262903`（UTC）→ 上报值 `1794817062903` |
+
+判定依据：两域各自的官方清单 `/workbuddy/saas/version.json` 的 `win32-x64-user` 段，
+加安装包内 `resources/app.asar.unpacked/cli/product.json`（`genieVersion`/`commit`/`date`）
+与同级 `cli/package.json`。国际安装包 SHA256 `38841a16…496441c` 与清单
+`win32-x64-user.stable.hashes.exe` 逐位一致，说明拿到的就是官方最新构建。
+`headers.go` 默认值改为 CN `5.11.3` / 国际 `5.11.4`（CLI 两边都是 `2.176.0`），
+`desktop.go` 的国际 `commit` / `releaseDate` 同步。
+
+### 抓包复核：chat 头族 42 项逐条对齐
+
+国际 chat（3 条，`POST /v2/chat/completions`）与网关改后出站**逐项一致**（不含传输层
+`Host`/`Content-Length`/`Accept-Encoding`/`Connection`/`Content-Encoding` 5 项）：
+
+| 项 | 官方 5.11.4 实测 | 处理 |
+|---|---|---|
+| `User-Agent`（chat） | `WorkBuddy/5.11.4 workbuddy-ai/5.11.4 CLI/2.176.0` | **不变**：首段仍是 `WorkBuddy` |
+| `User-Agent`（`/v2/report`、`/portal/*`） | `workbuddy-ai/5.11.4 workbuddy-ai/5.11.4 CLI/2.176.0` | 新增 `desktopRPCUAFor`：5.11 起非 chat RPC 首段取 `applicationName` |
+| `X-Client-Version/Platform/Product` | `5.11.4` / `windows` / `workbuddy-ai` | 门控未改，版本跨过 5.11 后自动下发（国际线首次带上） |
+| `X-No-Enterprise-Id` | **官方一条都不带**（5.8.4 / 5.9.4 / 5.11.4 三轮） | 国际号不再伪造该头；CN 分支未动（待同口径复核） |
+| `X-B3-ParentSpanId` + `b3` 第 4 段 | 必发，父 span 同会话恒定 | 补上（父 span 取会话级 `convReqID[:16]`） |
+| `/v2/report` 的 `X-Client-*` / `X-Device-Token` | 都带 | 补进 report 路径 |
+| `/v2/report` 的 `X-Request-ID` | 32 位 hex，逐请求新值 | 由 `deriveID+纳秒` 改为消息级 32 hex |
+
+其余取值（`baggage` / `traceparent` / `X-Conversation-*` / `X-Root-Request-ID` /
+`x-stainless-*` / `acp-connection-id` / `X-Agent-*` / `X-IDE-*` / `X-Private-Data`）
+与抓包一致，零改动。
+
+### 顺带修正：billing UA 的版本按 realm 取
+
+`billingUAFor` 之前用 `clientVersion()`（恒为 CN 默认值）拼 `WorkBuddy AI/<ver>`，
+两域版本同轨时看不出来，这次 CN 5.11.3 / 国际 5.11.4 分叉就会让国际号的 billing 请求
+自述 5.11.3。改为 `clientVersionFor(a)`，与 chat/report 同源。
+
+### 国内线复核（无改动）
+
+CN 5.11.3 抓包（启动期 100+ 条）确认 `/v2/report` 的 `ideVersion=5.11.3`、
+`commit=ecace0f7…`、`releaseDate=1794502175226`、`X-Client-*` 三头与现有常量逐位一致；
+UA 两段都是 `WorkBuddy`，`desktopRPCUAFor` 对国内线是恒等变换。
+
+### 实测附注（只归档，不改代码）
+
+| 观测 | 结论 |
+|---|---|
+| 国际 5.11.4 启动期 57 条请求全带 `X-Client-*` | `>= 5.11` 的版本门控按预期生效，未改一行判定 |
+| 同一客户端内 UA 分四种（`WorkBuddy/…`、`node`、`axios/1.16.1`、空） | 属不同子进程/子客户端，网关只仿真 chat 与桌面 RPC 两条主路径 |
+| SSE `usage` 键集与 11-16 一致；`normalizeFrame` 仍丢 `logprobs`/`extra_fields` | 非身份常量，维持现状 |
+
+---
+
 
 国内客户端从 5.9.3 升到 5.11.3（内嵌 CLI 2.165.0 → 2.176.0），国际线仍停在 5.9.4 / CLI 2.165.0。
 两域各重抓一轮（CN `captures_mitm/20261116-091004`：340+ 条请求、7 条 `POST /v2/chat/completions`、

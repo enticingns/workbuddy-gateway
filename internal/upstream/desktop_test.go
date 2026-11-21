@@ -142,8 +142,15 @@ func TestDesktopFingerprintRealm(t *testing.T) {
 	if got, want := c.userAgent(cn), "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0"; got != want {
 		t.Errorf("CN UA=%q want %q", got, want)
 	}
-	if got, want := c.userAgent(global), "WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0"; got != want {
+	if got, want := c.userAgent(global), "WorkBuddy/5.11.4 workbuddy-ai/5.11.4 CLI/2.176.0"; got != want {
 		t.Errorf("global UA=%q want %q", got, want)
+	}
+	// 非 chat 桌面 RPC（/v2/report、/portal/*）首段跟随 applicationName（5.11+ 实测）。
+	if got, want := c.desktopRPCUAFor(global), "workbuddy-ai/5.11.4 workbuddy-ai/5.11.4 CLI/2.176.0"; got != want {
+		t.Errorf("global RPC UA=%q want %q", got, want)
+	}
+	if got, want := c.desktopRPCUAFor(cn), "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0"; got != want {
+		t.Errorf("CN RPC UA=%q want %q", got, want)
 	}
 
 	fpCN, fpGL := c.desktopFingerprint(cn), c.desktopFingerprint(global)
@@ -153,9 +160,9 @@ func TestDesktopFingerprintRealm(t *testing.T) {
 			fpCN["ideVersion"], fpCN["commit"], fpCN["releaseDate"],
 			desktopCommitCN, desktopReleaseDateCN)
 	}
-	if fpGL["ideVersion"] != "5.9.4" || fpGL["commit"] != desktopCommitGlobal ||
+	if fpGL["ideVersion"] != "5.11.4" || fpGL["commit"] != desktopCommitGlobal ||
 		fpGL["releaseDate"] != desktopReleaseDateGlobal {
-		t.Errorf("global 指纹=%v/%v/%v want 5.9.4/%s/%d",
+		t.Errorf("global 指纹=%v/%v/%v want 5.11.4/%s/%d",
 			fpGL["ideVersion"], fpGL["commit"], fpGL["releaseDate"],
 			desktopCommitGlobal, desktopReleaseDateGlobal)
 	}

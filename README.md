@@ -84,8 +84,8 @@ exe 为单文件自包含（面板前端已 embed），拷到任意 Windows 机�
 | `listen` | `:7863` | 监听地址 |
 | `api_key` | 空 | 网关鉴权密钥；**空 = 不鉴权直接放行**，公网必须设置 |
 | `auth_dir` / `state_file` | `./auths` / `./data/state.json` | 凭证目录 / 池状态 |
-| `upstream.client_version` | `5.11.3` / `5.9.4` | 出站身份版本（跟随官方桌面端；缺省按域分档：CN / 国际） |
-| `upstream.cli_version` | `2.176.0` / `2.165.0` | 出站身份版本（跟随官方内嵌 CLI；缺省按域分档） |
+| `upstream.client_version` | `5.11.3` / `5.11.4` | 出站身份版本（跟随官方桌面端；缺省按域分档：CN / 国际） |
+| `upstream.cli_version` | `2.176.0` / `2.176.0` | 出站身份版本（跟随官方内嵌 CLI；缺省按域分档） |
 | `upstream.gzip_request_body` | `true` | chat 请求体 gzip（官方恒压；`false` 还原明文 body，排障用） |
 | `upstream.timeout_seconds` | `120` | 短 RPC（刷新 / 签到 / 余额 / 模型列表）上限 |
 | `upstream.header_timeout_seconds` | 回落上一项 | 聊天首字节前上限 |
@@ -203,7 +203,7 @@ cp ../<旧目录>/config.json config.json     # 旧配置可直接用；没有�
 ```
 
 旧 `config.json` 可以直接用：缺失的新字段走代码默认值，未知字段被忽略。若旧版 `config.json`
-里没有 `upstream.client_version` / `cli_version`，新版按 CN 5.11.3 / 国际 5.9.4、CLI 2.176.0 / 2.165.0 出站。
+里没有 `upstream.client_version` / `cli_version`，新版按 CN 5.11.3 / 国际 5.11.4、CLI 2.176.0 / 2.176.0 出站。
 
 ### 3. 迁移数据
 
@@ -278,22 +278,26 @@ curl -s https://download.codebuddy.ai/workbuddy/saas/version.json   # 国际线
 { "upstream": { "client_version": "5.11.3", "cli_version": "2.176.0" } }
 ```
 
-留空则按域取内置默认（当前 CN `5.11.3` / CLI `2.176.0`，国际 `5.9.4` / CLI `2.165.0`）。重启容器生效。
+留空则按域取内置默认（当前 CN `5.11.3` / CLI `2.176.0`，国际 `5.11.4` / CLI `2.176.0`）。重启容器生效。
 这两个值当前**不被上游校验**（实测改值、空 UA 都能通过），同步只是为了降低
 被识别为非官方客户端的确定性；真正的硬约束是国际版三个会话头非空
 （`X-Conversation-ID` / `X-Conversation-Request-ID` / `X-Conversation-Message-ID`）。
 
 `X-Client-Version` / `X-Client-Platform` / `X-Client-Product` 三头按**版本自动跟进**：客户端版本
-≥ 5.11 才下发（CN 5.11.3 实测全量请求都带，国际 5.9.4 一条都不带）。国际线将来跟到 5.11 以上会自动带上，
-不用改代码。
+≥ 5.11 才下发（CN 5.11.3 与 intl 5.11.4 实测全量请求都带；intl 5.9.4 一条都不带）。
+国际线 2026-11-21 升到 5.11.4 后，这套门控**没改一行代码就自动开始下发**。
 
 > **别盲跟 npm 上的最新 CLI**：网关的 UA 身份是「桌面端 + 其内嵌 CLI」的组合，CLI 包单独发版并不代表
 > 桌面端身份变了，把 `cli_version` 跟到最新反而拼出官方不存在的组合。要跟的是**桌面端版本**。
 >
-> **两域版本不同轨**：2026-11-16 核对时国内线已到 5.11.3（CLI 2.176.0），国际线仍停在 5.9.4
-> （CLI 2.165.0）——同一时刻官方清单就是这样下发的。别拿国内安装包去"升级"国际版：两者
+> **两域版本不同轨**：2026-11-21 核对时国内线 5.11.3（CLI 2.176.0），国际线已跳到 5.11.4
+> （CLI 2.176.0）——同一时刻官方清单就是这样下发的，两边不必同步。别拿国内安装包去"升级"国际版：两者
 > `applicationName`（`WorkBuddy` vs `workbuddy-ai`）与数据目录（`.workbuddy` vs `.workbuddy-ai`）
 > 都不同，混装会让两个身份共用一份用户材料。
+>
+> **UA 首段从 5.11 起跟随 applicationName**：intl 5.9.4 是 `WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0`，
+> intl 5.11.4 实测变成 `workbuddy-ai/5.11.4 workbuddy-ai/5.11.4 CLI/2.176.0`。网关已按「版本 ≥ 5.11
+> 时首段取 applicationName」实现，CN 的 applicationName 本就是 `WorkBuddy`，国内线零变化。
 
 用 GHCR 镜像时，镜像内的代码默认值由 CI 构建时的源码决定；配置项优先级高于代码默认值。
 

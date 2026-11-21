@@ -126,12 +126,17 @@ func TestChatHeadersMatchCapturedBaseline(t *testing.T) {
 		t.Errorf("CN 应带 baggage + X-Agent-Runtime: local-agent（5.11.3 实测），got baggage=%q runtime=%q",
 			cn.Get("baggage"), cn.Get("X-Agent-Runtime"))
 	}
-	// 链路三套格式同源：traceparent/b3 必须复用 X-B3-TraceId/SpanId。
+	// 链路三套格式同源：traceparent/b3 必须复用 X-B3-TraceId/SpanId/ParentSpanId。
+	// b3 单头带第 4 段父 span（intl 5.11.4 真机实测形态：trace-span-1-parent）。
 	traceID, spanID := cn.Get("X-B3-TraceId"), cn.Get("X-B3-SpanId")
+	parentID := cn.Get("X-B3-ParentSpanId")
 	if want := "00-" + traceID + "-" + spanID + "-01"; cn.Get("traceparent") != want {
 		t.Errorf("traceparent = %q, want %q", cn.Get("traceparent"), want)
 	}
-	if want := traceID + "-" + spanID + "-1"; cn.Get("b3") != want {
+	if parentID == "" {
+		t.Errorf("缺 X-B3-ParentSpanId（真机 chat 必带）")
+	}
+	if want := traceID + "-" + spanID + "-1-" + parentID; cn.Get("b3") != want {
 		t.Errorf("b3 = %q, want %q", cn.Get("b3"), want)
 	}
 
@@ -210,10 +215,12 @@ func TestXDomainFollowsHost(t *testing.T) {
 
 // TestXClientHeadersGatedByVersion 断言 X-Client-* 三头族按客户端版本判定下发。
 //
-// 真机抓包（2026-11-16，captures_mitm/20261116-091004）：
+// 真机抓包（2026-11-16 / 2026-11-21）：
 //   - CN 5.11.3：全部请求都带 `5.11.3` / `windows` / `WorkBuddy`（chat、report、
 //     portal、mcp 等路径 300+ 条全命中）；
-//   - intl 5.9.4：chat + 全量路径一条都不带（11-08 基线 154 条同样零命中）。
+//   - intl 5.9.4：chat + 全量路径一条都不带（11-08 基线 154 条同样零命中）；
+//   - intl 5.11.4：全部请求都带 `5.11.4` / `windows` / `workbuddy-ai`
+//     （11-21 启动期 57 条全命中，含 /v2/report、billing）。
 func TestXClientHeadersGatedByVersion(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -230,9 +237,16 @@ func TestXClientHeadersGatedByVersion(t *testing.T) {
 			wantProd: "WorkBuddy",
 		},
 		{
-			name:     "intl 默认 5.9.4 → 不带（官方 5.9.4 实测不发）",
+			name:     "intl 默认 5.11.4 → 带三头，产品段 workbuddy-ai",
 			client:   &Client{},
 			auth:     &auth.Auth{UID: "u2", AccessToken: "at", Domain: "www.workbuddy.ai"},
+			wantVer:  "5.11.4",
+			wantProd: "workbuddy-ai",
+		},
+		{
+			name:     "intl 显式降到 5.9.4 → 不带（官方 5.9.4 实测不发）",
+			client:   &Client{ClientVersion: "5.9.4"},
+			auth:     &auth.Auth{UID: "u2b", AccessToken: "at", Domain: "www.workbuddy.ai"},
 			wantVer:  "",
 			wantProd: "",
 		},
