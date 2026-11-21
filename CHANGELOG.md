@@ -53,11 +53,14 @@ chat 头族逐项比对后协议层有五处要跟进。
 两域版本同轨时看不出来，这次 CN 5.11.3 / 国际 5.11.4 分叉就会让国际号的 billing 请求
 自述 5.11.3。改为 `clientVersionFor(a)`，与 chat/report 同源。
 
-### 国内线复核（无改动）
+### 国内线复核（版本不变，头族两处对齐）
 
-CN 5.11.3 抓包（启动期 100+ 条）确认 `/v2/report` 的 `ideVersion=5.11.3`、
+CN 5.11.3 抓包（启动期 158 条，含 3 条 chat）确认 `/v2/report` 的 `ideVersion=5.11.3`、
 `commit=ecace0f7…`、`releaseDate=1794502175226`、`X-Client-*` 三头与现有常量逐位一致；
 UA 两段都是 `WorkBuddy`，`desktopRPCUAFor` 对国内线是恒等变换。
+CN chat 头族（不含传输层 5 项共 42 项）与网关改后出站**逐项一致**，其中两处属于本轮修正：
+官方 CN chat **也不发** `X-No-Enterprise-Id`（原先国内号会伪造），且同样**必发**
+`X-B3-ParentSpanId`（`b3` 单头带第 4 段）。
 
 ### 实测附注（只归档，不改代码）
 
