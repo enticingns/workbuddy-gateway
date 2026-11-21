@@ -394,20 +394,13 @@ func (c *Client) ChatHeaders(req *http.Request, a *auth.Auth, clientIP string, m
 		req.Header.Set("X-No-User-Id", "1")
 	}
 	// 安全红线：绝不在 chat 请求里携带 X-Refresh-Token。
-	// 企业头按 realm 分发：CN 走既有分支（EnterpriseID 原样透传，缺省 X-No-Enterprise-Id）；
-	// global 账号**不发**任何企业头——intl 5.8.4 / 5.9.4 / 5.11.4 三轮真机抓包都证明
-	// 国际客户端一条企业头都不带（`X-No-Enterprise-Id` 曾经由 injectGlobalChatHeaders
-	// 伪造，2026-11-21 抓包复核后移除：官方不发的头等于额外指纹面）。
+	// 企业头：只有账号本身带 EnterpriseID 时才原样透传 `X-Enterprise-Id`。
+	// **不再伪造 `X-No-Enterprise-Id`**——2026-11-21 两域真机抓包（intl 5.11.4 / CN 5.11.3，
+	// 各 3 条 chat + 启动期全量请求）里官方客户端一条企业头都不发；
+	// 官方不发的头等于额外指纹面（减法原则）。
 	// X-Domain 由 CommonHeaders 统一按域声明。
-	//
-	// 注：CN 分支的 `X-No-Enterprise-Id` 仍保留原样——国内线尚未做同口径抓包复核，
-	// 不做未经验证的改动。
-	if a != nil && !a.IsGlobal() {
-		if a.EnterpriseID != "" {
-			req.Header.Set("X-Enterprise-Id", a.EnterpriseID)
-		} else {
-			req.Header.Set("X-No-Enterprise-Id", "1")
-		}
+	if a != nil && a.EnterpriseID != "" {
+		req.Header.Set("X-Enterprise-Id", a.EnterpriseID)
 	}
 	// 官方 openai-node 运行时指纹族 + ACP 连接标识（实测 chat 必带）。
 	injectStainless(req)

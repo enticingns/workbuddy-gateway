@@ -38,7 +38,7 @@ chat 头族逐项比对后协议层有五处要跟进。
 | `User-Agent`（chat） | `WorkBuddy/5.11.4 workbuddy-ai/5.11.4 CLI/2.176.0` | **不变**：首段仍是 `WorkBuddy` |
 | `User-Agent`（`/v2/report`、`/portal/*`） | `workbuddy-ai/5.11.4 workbuddy-ai/5.11.4 CLI/2.176.0` | 新增 `desktopRPCUAFor`：5.11 起非 chat RPC 首段取 `applicationName` |
 | `X-Client-Version/Platform/Product` | `5.11.4` / `windows` / `workbuddy-ai` | 门控未改，版本跨过 5.11 后自动下发（国际线首次带上） |
-| `X-No-Enterprise-Id` | **官方一条都不带**（5.8.4 / 5.9.4 / 5.11.4 三轮） | 国际号不再伪造该头；CN 分支未动（待同口径复核） |
+| `X-No-Enterprise-Id` | **官方一条都不带**（intl 5.8.4 / 5.9.4 / 5.11.4 三轮 + CN 5.11.3 本轮） | 两域都不再伪造该头；账号真带 `EnterpriseID` 时仍透传 `X-Enterprise-Id` |
 | `X-B3-ParentSpanId` + `b3` 第 4 段 | 必发，父 span 同会话恒定 | 补上（父 span 取会话级 `convReqID[:16]`） |
 | `/v2/report` 的 `X-Client-*` / `X-Device-Token` | 都带 | 补进 report 路径 |
 | `/v2/report` 的 `X-Request-ID` | 32 位 hex，逐请求新值 | 由 `deriveID+纳秒` 改为消息级 32 hex |
